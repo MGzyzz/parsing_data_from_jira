@@ -1,0 +1,17 @@
+# Секреты — никогда в репозиторий
+.env
+env.sh
+secrets/
+*credentials*.json
+*service-account*.json
+
+# Локальные данные прогона
+cache/
+data/
+*.log
+
+# Собранный бинарник
+env-release-tracker
+
+# macOS
+.DS_Store
