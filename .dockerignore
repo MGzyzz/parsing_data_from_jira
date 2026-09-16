@@ -1,0 +1,19 @@
+# Секреты — не должны попасть в build context, даже временно.
+.env
+env.sh
+secrets/
+*credentials*.json
+*service-account*.json
+*token*.json
+
+# Локальные данные и артефакты.
+cache/
+data/
+*.log
+env-release-tracker
+
+# Репозиторий и инструменты разработки — не нужны внутри образа.
+.git/
+.gitignore
+docs/
+*.md
