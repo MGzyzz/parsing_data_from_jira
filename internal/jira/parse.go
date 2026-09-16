@@ -1,5 +1,5 @@
-// Package jira читает задачи релизов. Только чтение: сервис не меняет в Jira
-// ничего, и это обеспечивается guard'ом в транспорте, а не дисциплиной.
+// Package jira загружает и разбирает задачи релизов.
+// Транспорт ReadOnly ограничивает доступ разрешёнными операциями чтения.
 package jira
 
 import (
@@ -23,8 +23,7 @@ type ReleaseTask struct {
 	// заданные до любого блока Environments, действуют на все среды,
 	// у которых нет своего блока.
 	EnvTags map[string]map[string]tag.Tag
-	// Skipped — строки, похожие на сервис, но с нечитаемым тегом.
-	// Разбор они не роняют, но должны попасть в лог.
+	// Skipped содержит строки с нераспознаваемыми тегами для диагностики.
 	Skipped []string
 }
 
@@ -56,9 +55,8 @@ var (
 	dateFormats = []string{"2006-01-02", "02.01.2006", "02/01/2006"}
 )
 
-// ParseIssue разбирает задачу. Второе значение — релизная ли она: под JQL
-// summary ~ "Release" попадает много постороннего, и отличать одно от другого
-// приходится сервису, потому что конвенцию для задач накатки не вводят.
+// ParseIssue извлекает номер релиза, дату и теги из задачи.
+// Второй результат указывает, распознана ли задача как релиз или HF.
 func ParseIssue(key, summary, description string, created time.Time) (ReleaseTask, bool) {
 	task := ReleaseTask{
 		Key:     key,
@@ -68,8 +66,8 @@ func ParseIssue(key, summary, description string, created time.Time) (ReleaseTas
 		EnvTags: map[string]map[string]tag.Tag{},
 	}
 
-	// У хотфиксов в заголовке стоит дата: "HF Release 11 Сентября". Принять
-	// 11 за номер релиза значило бы сверяться с несуществующим релизом.
+	// В заголовке HF после Release может стоять дата, например 11 Сентября.
+	// Номер релиза из такого заголовка не извлекается.
 	if !task.IsHF {
 		if m := releaseNumber.FindStringSubmatch(summary); m != nil {
 			task.Number, _ = strconv.Atoi(m[1])
@@ -81,8 +79,7 @@ func ParseIssue(key, summary, description string, created time.Time) (ReleaseTas
 
 	parseDescription(&task, description)
 
-	// Релизная задача обязана иметь номер или пометку HF и хотя бы один
-	// разбираемый тег: иначе сверять нечего.
+	// Для распознавания нужны номер релиза или HF и хотя бы один разобранный тег.
 	if task.Number == 0 && !task.IsHF {
 		return ReleaseTask{}, false
 	}
@@ -92,12 +89,9 @@ func ParseIssue(key, summary, description string, created time.Time) (ReleaseTas
 	return task, true
 }
 
-// parseDescription проходит описание построчно, разбирая секции.
-//
-// Блоков Environments + Projects в одной задаче бывает несколько: в DOPS-4820
-// основной поток идёт на main-1.29.0, а prod-holding и prod-idfrk на
-// release-1.29.1. Поэтому Projects относится к последнему встреченному
-// Environments, а до первого такого блока — к основному потоку.
+// parseDescription разбирает секции описания построчно.
+// Projects относится к последнему блоку Environments;
+// до первого такого блока теги сохраняются в общий состав.
 func parseDescription(task *ReleaseTask, description string) {
 	var (
 		inProjects bool

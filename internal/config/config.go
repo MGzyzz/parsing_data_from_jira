@@ -63,10 +63,7 @@ type Lookup func(string) (string, bool)
 // OSLookup читает настоящее окружение процесса.
 func OSLookup(key string) (string, bool) { return os.LookupEnv(key) }
 
-// Load собирает конфиг, накапливая все ошибки разом.
-//
-// Разом, а не по первой: иначе развёртывание с тремя незаполненными
-// секретами требует трёх запусков, чтобы узнать о каждом.
+// Load загружает настройки и возвращает все ошибки валидации одним результатом.
 func Load(env Lookup) (Config, error) {
 	l := loader{env: env}
 
@@ -97,7 +94,7 @@ func Load(env Lookup) (Config, error) {
 		OverridesFile:   l.str("OVERRIDES_FILE", "overrides.yaml"),
 	}
 
-	// Нулевая параллельность остановила бы прогон молча.
+	// Для обработки сред требуется хотя бы один рабочий слот.
 	if cfg.Concurrency < 1 {
 		l.errs = append(l.errs, errors.New("CONCURRENCY должен быть больше нуля"))
 	}

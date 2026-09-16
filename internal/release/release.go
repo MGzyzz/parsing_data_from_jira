@@ -1,9 +1,5 @@
-// Package release определяет, какой релиз стоит на среде.
-//
-// Источник правды — теги образов в кластере, а не Jira: в реестре версия
-// устаревает, а в задачах релиза бывают опечатки. Jira даёт базовые теги
-// для сверки и для признака HF, но права вето у неё нет: лучше записать
-// значение с пометкой о расхождении, чем оставить заведомо устаревшее.
+// Package release определяет релиз по версиям образов.
+// Базовые теги Jira используются для расчёта HF и признака расхождения.
 package release
 
 import (
@@ -34,7 +30,7 @@ type Baseline struct {
 type Config struct {
 	// MinorOffset связывает номер релиза с minor: Release N <-> minor = N - offset.
 	MinorOffset int
-	// CoreServices катятся тегами на всех средах, номер релиза считается по ним.
+	// CoreServices содержит имена сервисов, по которым определяется номер релиза.
 	CoreServices []string
 }
 
@@ -52,10 +48,7 @@ type Result struct {
 // Defined сообщает, удалось ли определить релиз.
 func (r Result) Defined() bool { return r.Release > 0 }
 
-// Cell возвращает текст для колонки Release реестра.
-//
-// Единственное место, где результат превращается в строку: формат HF и показ
-// расхождений меняются правкой этой функции, а не логики расчёта.
+// Cell форматирует результат для колонки Release: Release N или Release N + HF.
 func (r Result) Cell() string {
 	if !r.Defined() {
 		return ""
@@ -99,10 +92,8 @@ func Compute(state EnvState, base *Baseline, cfg Config) Result {
 	return res
 }
 
-// latestByService оставляет по одному тегу на сервис.
-//
-// Во время накатки в подах живут два тега сразу; берём больший, иначе
-// среда выглядела бы откатившейся назад.
+// latestByService выбирает максимальную версию каждого сервиса.
+// Несколько версий могут присутствовать одновременно во время обновления.
 func latestByService(tags []tag.Tag) map[string]tag.Tag {
 	latest := make(map[string]tag.Tag, len(tags))
 	for _, t := range tags {
@@ -122,10 +113,8 @@ func coreSet(services []string) map[string]bool {
 	return set
 }
 
-// coreMinor возвращает minor, по которому считается номер релиза.
-//
-// Если кор-сервисы разъехались, берём меньший: среда считается обновлённой
-// до релиза только тогда, когда до него доехал последний из них.
+// coreMinor возвращает минимальный minor среди найденных кор-сервисов.
+// Различающиеся значения minor отмечаются как расхождение.
 func coreMinor(latest map[string]tag.Tag, core map[string]bool) (minor int, mismatch bool, details []string, ok bool) {
 	seen := map[int][]string{}
 	for service := range core {
@@ -156,11 +145,8 @@ func coreMinor(latest map[string]tag.Tag, core map[string]bool) (minor int, mism
 	return minors[0], false, nil, true
 }
 
-// hasHotfix определяет, ушёл ли хоть один сервис вперёд задачи Release N.
-//
-// Кор-сервисы сравниваются по патчу: релиз двигает minor, HF — патч.
-// Остальные — целиком с тегом из задачи: у них своя нумерация (в Release 67
-// redo-email стоял на main-1.9.6), и правило N-39 к ним неприменимо.
+// hasHotfix сравнивает версии сервисов с базовыми тегами релиза.
+// Для кор-сервисов сравнивается patch, для остальных — полная версия.
 func hasHotfix(latest map[string]tag.Tag, core map[string]bool, base *Baseline) (bool, []string) {
 	var (
 		hf      bool
@@ -187,7 +173,7 @@ func hasHotfix(latest map[string]tag.Tag, core map[string]bool, base *Baseline) 
 		}
 		bt, found := base.Tags[service]
 		if !found {
-			// Сервиса нет в задаче релиза - судить о его новизне не по чему.
+			// Без базового тега сервис не участвует в определении HF.
 			details = append(details, "нет в задаче релиза: "+t.Raw)
 			continue
 		}

@@ -53,8 +53,7 @@ type Client struct {
 	sheets *sheets.Service
 }
 
-// New поднимает клиента Sheets. Авторизацию передаёт вызывающий через opts:
-// пакету незачем знать, откуда берётся ключ service account.
+// New создаёт клиент Sheets с параметрами авторизации из opts.
 func New(ctx context.Context, cfg Config, opts ...option.ClientOption) (*Client, error) {
 	srv, err := sheets.NewService(ctx, opts...)
 	if err != nil {
@@ -105,7 +104,7 @@ func (c *Client) List(ctx context.Context) ([]Row, error) {
 func (c *Client) Update(ctx context.Context, updates []Update) (int, error) {
 	pending := make([]Update, 0, len(updates))
 	for _, u := range updates {
-		// Пустое значение — релиз не определён. Старое значение лучше, чем никакое.
+		// Пустой результат не должен перезаписывать существующий релиз.
 		if u.Value != "" {
 			pending = append(pending, u)
 		}
@@ -140,8 +139,7 @@ func (c *Client) Update(ctx context.Context, updates []Update) (int, error) {
 	}
 
 	_, err = c.sheets.Spreadsheets.Values.BatchUpdate(c.cfg.SpreadsheetID, &sheets.BatchUpdateValuesRequest{
-		// RAW: значение ложится как текст. USER_ENTERED толковал бы его
-		// по правилам Sheets, и строка, начатая с "=", стала бы формулой.
+		// RAW сохраняет значение без интерпретации формул.
 		ValueInputOption: "RAW",
 		Data:             data,
 	}).Context(ctx).Do()

@@ -1,10 +1,4 @@
-// Package tag разбирает теги образов и приводит имена сервисов к одному виду.
-//
-// Теги приходят из двух источников в разных формах: из кластера — как
-// "redo-backend:main-1.29.13", из секции Projects в Jira — как
-// " # backend: main-1.29.0". Смысл у них один, поэтому разбор и сравнение
-// живут здесь: если правила разъедутся по двум местам, сервис начнёт врать
-// молча, а расхождение всплывёт уже на боевых средах.
+// Package tag разбирает и сравнивает версии образов, нормализует имена сервисов.
 package tag
 
 import (
@@ -19,10 +13,7 @@ import (
 // ветки или это инфраструктурный образ. Такие в расчёт релиза не идут.
 var ErrNotVersionTag = errors.New("тег не является версией")
 
-// Version — версия из тега.
-//
-// Suffix хранит хвост cherry-pick (main-1.28.1-mcp4-8164): без него два
-// разных образа выглядели бы одинаково.
+// Version содержит числовые компоненты версии и суффикс сборки.
 type Version struct {
 	Major, Minor, Patch int
 	Suffix              string
@@ -62,7 +53,7 @@ func parseVersion(s string) (Version, string, error) {
 		return Version{}, "", ErrNotVersionTag
 	}
 
-	// Ошибку Atoi не проверяем: регулярное выражение уже гарантирует цифры.
+	// Регулярное выражение проверяет формат чисел; переполнение здесь не обрабатывается.
 	major, _ := strconv.Atoi(m[2])
 	minor, _ := strconv.Atoi(m[3])
 	patch, _ := strconv.Atoi(m[4])
@@ -96,16 +87,12 @@ func (v Version) Compare(o Version) int {
 // " # ", а в присланных вручную выгрузках встречается "3. ".
 var listMarker = regexp.MustCompile(`^(?:#+|\d+\.)\s*`)
 
-// nonRedoServices — образы, которым префикс redo- не положен: стороннее ПО,
-// живущее в тех же namespace. Список дополняется по мере встречи таких образов.
+// nonRedoServices перечисляет сервисы, имена которых не требуют префикса redo-.
 var nonRedoServices = map[string]bool{
 	"onlyoffice-documentserver-unlimited": true,
 }
 
-// NormalizeService приводит имя сервиса к имени образа в кластере.
-//
-// В Jira пишут то "backend:", то "redo-backend:" — без приведения к одному
-// виду сверка с тегами кластера не сойдётся и все сервисы попадут в детали.
+// NormalizeService добавляет префикс redo-, кроме сервисов из nonRedoServices.
 func NormalizeService(name string) string {
 	if strings.HasPrefix(name, "redo-") || nonRedoServices[name] {
 		return name
@@ -113,12 +100,9 @@ func NormalizeService(name string) string {
 	return "redo-" + name
 }
 
-// ParseProjectLine разбирает строку секции Projects из описания задачи Jira.
-//
-// Второе возвращаемое значение отличает намеренный пропуск от ошибки:
-// зачёркнутый сервис, пустой тег и заголовок секции — это не сбой разбора,
-// а часть формата. Ошибка означает, что строка похожа на сервис, но тег
-// прочитать не удалось: такое должно попасть в лог, а не потеряться.
+// ParseProjectLine разбирает строку секции Projects из описания Jira.
+// Возвращает ok=false без ошибки для пропускаемых строк: например,
+// зачёркнутого сервиса или пустого тега. Нераспознаваемый тег возвращает ошибку.
 func ParseProjectLine(line string) (Tag, bool, error) {
 	raw := listMarker.ReplaceAllString(strings.TrimSpace(line), "")
 	if raw == "" {
