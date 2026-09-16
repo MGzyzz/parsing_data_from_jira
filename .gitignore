@@ -15,6 +15,16 @@ env-release-tracker
 
 # macOS
 .DS_Store
-./docs
-.MEMORY.md
 
+# Локальные требования, планы и контекст ИИ
+/docs/
+MEMORY.md
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.agents/
+.codex/
+.claude/
+.cursor/
+.cursorrules
+.github/copilot-instructions.md
