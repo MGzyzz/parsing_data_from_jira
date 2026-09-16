@@ -1,0 +1,12 @@
+{
+  "environment": "prod-holding",
+  "namespace": "prod-holding",
+  "collected_at": "2026-09-15T10:00:00Z",
+  "images": [
+    "redo-nuxeo:release-1.29.1",
+    "redo-backend:release-1.29.1",
+    "redo-camunda:release-1.29.1",
+    "redo-front:release-1.29.1",
+    "redo-integration:release-1.29.1"
+  ]
+}

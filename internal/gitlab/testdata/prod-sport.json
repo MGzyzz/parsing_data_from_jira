@@ -1,0 +1,12 @@
+{
+  "environment": "prod-sport",
+  "namespace": "prod-sport",
+  "collected_at": "2026-09-15T10:00:00Z",
+  "images": [
+    "redo-nuxeo:main-1.28.5",
+    "redo-backend:main-1.28.5",
+    "redo-camunda:main-1.28.5",
+    "redo-front:main-1.28.5",
+    "redo-integration:main-1.28.5"
+  ]
+}

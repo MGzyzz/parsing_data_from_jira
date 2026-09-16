@@ -1,0 +1,12 @@
+{
+  "environment": "baiterek-prod",
+  "namespace": "baiterek-prod",
+  "collected_at": "2026-09-15T10:00:00Z",
+  "images": [
+    "redo-nuxeo:main-1.29.20",
+    "redo-backend:main-1.29.20",
+    "redo-camunda:main-1.29.20",
+    "redo-front:main-1.29.20",
+    "redo-integration:main-1.29.20"
+  ]
+}

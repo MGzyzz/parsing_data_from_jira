@@ -96,6 +96,46 @@ func TestGuardBlocksMutatingCalls(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedSetsBearerHeader(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// Authenticated снаружи, ReadOnly у самой сети — как в реальном клиенте.
+	client := &http.Client{Transport: Authenticated("secret-token", ReadOnly(nil))}
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/rest/api/2/field", nil)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("запрос отклонён: %v", err)
+	}
+	resp.Body.Close()
+
+	if want := "Bearer secret-token"; got != want {
+		t.Errorf("Authorization = %q, хочу %q", got, want)
+	}
+}
+
+func TestAuthenticatedDoesNotBypassGuard(t *testing.T) {
+	// Authenticated только добавляет заголовок; запрет на мутирующие
+	// вызовы должен остаться в силе независимо от порядка обёрток.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("запрещённый вызов дошёл до сервера")
+	}))
+	defer srv.Close()
+
+	client := &http.Client{Transport: Authenticated("secret-token", ReadOnly(nil))}
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/rest/api/2/issue/X", nil)
+
+	if resp, err := client.Do(req); err == nil {
+		resp.Body.Close()
+		t.Fatal("мутирующий вызов прошёл через Authenticated")
+	}
+}
+
 func TestGuardIgnoresQueryString(t *testing.T) {
 	// Разрешение даёт путь, а не строка запроса: иначе достаточно было бы
 	// дописать параметр, чтобы обойти белый список.

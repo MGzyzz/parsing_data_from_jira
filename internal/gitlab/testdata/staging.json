@@ -1,0 +1,10 @@
+{
+  "environment": "staging",
+  "namespace": "staging",
+  "collected_at": "2026-09-15T10:00:00Z",
+  "images": [
+    "redo-backend:main-1.29.13",
+    "redo-ai@sha256:2b3c4d5e6f",
+    "postgres"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "environment": "prod-tks",
+  "namespace": "prod-tks",
+  "collected_at": "2026-09-15T10:00:00Z",
+  "images": [
+    "redo-nuxeo:main-1.27.4",
+    "redo-backend:main-1.27.4",
+    "redo-camunda:main-1.27.4",
+    "redo-front:main-1.27.4",
+    "redo-integration:main-1.27.4"
+  ]
+}
