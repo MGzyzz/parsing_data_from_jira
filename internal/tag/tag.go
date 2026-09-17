@@ -130,7 +130,7 @@ func ParseProjectLine(line string) (Tag, bool, error) {
 	}
 
 	// Разметку снимаем только для разбора: в Raw строка остаётся как в задаче.
-	name, rest, ok := strings.Cut(strings.ReplaceAll(raw, "*", ""), ":")
+	name, rest, ok := strings.Cut(stripMarkup(raw), ":")
 	if !ok {
 		return Tag{}, false, nil
 	}
@@ -141,7 +141,7 @@ func ParseProjectLine(line string) (Tag, bool, error) {
 		return Tag{}, false, nil // сервис упомянут, но тег не проставлен
 	}
 
-	v, branch, err := parseVersion(linkText(fields[0]))
+	v, branch, err := parseVersion(versionToken(fields[0]))
 	if err != nil {
 		return Tag{}, false, fmt.Errorf("%q: %w", raw, err)
 	}
@@ -152,6 +152,23 @@ func ParseProjectLine(line string) (Tag, bool, error) {
 		Version: v,
 		Raw:     raw,
 	}, true, nil
+}
+
+// colorMarkup — цветовая разметка Jira {color:#172b4d}...{color}. Появляется,
+// когда состав копируют из другого редактора; в двоеточии внутри неё
+// строка сервиса разрезалась бы не там.
+var colorMarkup = regexp.MustCompile(`\{color(?::[^}]*)?\}`)
+
+// stripMarkup снимает жирный шрифт и цвет, оставляя текст строки.
+func stripMarkup(s string) string {
+	return colorMarkup.ReplaceAllString(strings.ReplaceAll(s, "*", ""), "")
+}
+
+// versionToken достаёт тег из первого токена значения: без вики-ссылки
+// и без комментария в скобках, приписанного без пробела: release-1.24.1(только ...).
+func versionToken(field string) string {
+	token, _, _ := strings.Cut(linkText(field), "(")
+	return token
 }
 
 // linkText снимает вики-ссылку Jira с тега: [main-1.29.17|https://gitlab/...].

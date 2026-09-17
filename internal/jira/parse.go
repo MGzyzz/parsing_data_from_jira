@@ -53,6 +53,11 @@ var (
 	// она не срабатывает — русские заголовки переставали распознаваться.
 	sectionHeader = regexp.MustCompile(`(?i)^(environments|среды|projects|проекты|date|дата|releases|релизы|hf)[^:]*:\s*(.*)$`)
 
+	// boldLabel распознаёт любой заголовок секции вида *Reindex:* или *From:* main.
+	// Двоеточие стоит сразу перед закрывающей звёздочкой — этим заголовок
+	// отличается от жирной строки сервиса *backend: main-1.29.0*.
+	boldLabel = regexp.MustCompile(`^\*[^*]+:\*`)
+
 	dateFormats = []string{"2006-01-02", "02.01.2006", "02/01/2006"}
 )
 
@@ -122,6 +127,13 @@ func parseDescription(task *ReleaseTask, description string) {
 			default:
 				inProjects = false
 			}
+			continue
+		}
+
+		// Незнакомая секция закрывает текущую: иначе её строки (патчи, конфиги,
+		// условия накатки) разбирались бы как состав Projects или список сред.
+		if boldLabel.MatchString(strings.TrimSpace(line)) {
+			inProjects, inEnvironments = false, false
 			continue
 		}
 

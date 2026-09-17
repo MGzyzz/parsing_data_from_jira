@@ -184,6 +184,27 @@ func TestParseProjectLine(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			// Цветовая разметка вокруг строки: скопировано из другого редактора.
+			name: "цветовая разметка вокруг строки",
+			in:   " # {color:#172b4d}nuxeo: main-1.27.0{color}",
+			want: Tag{Service: "redo-nuxeo", Branch: "main", Version: Version{1, 27, 0, ""}, Raw: "{color:#172b4d}nuxeo: main-1.27.0{color}"},
+		},
+		{
+			name: "цветовая разметка вокруг тега",
+			in:   " # front: {color:#172b4d}main-1.11.0{color}",
+			want: Tag{Service: "redo-front", Branch: "main", Version: Version{1, 11, 0, ""}, Raw: "front: {color:#172b4d}main-1.11.0{color}"},
+		},
+		{
+			name: "комментарий в скобках без пробела",
+			in:   "9.redo-1c-hr: release-1.24.1(только для amanat-prod & baiterek-prod)",
+			want: Tag{Service: "redo-1c-hr", Branch: "release", Version: Version{1, 24, 1, ""}, Raw: "redo-1c-hr: release-1.24.1(только для amanat-prod & baiterek-prod)"},
+		},
+		{
+			name:     "сервис без тега в цветовой разметке пропускается",
+			in:       " # {color:#172b4d}redo-superset-custom:{color}",
+			wantSkip: true,
+		},
+		{
 			// Зачёркнутый сервис исключён из релиза.
 			name:     "зачёркнутая строка пропускается",
 			in:       " # -enbek-integration: main-1.29.0-",

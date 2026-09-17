@@ -237,3 +237,43 @@ func TestStruckEnvironmentInListIsExcluded(t *testing.T) {
 		t.Errorf("EnvTags = %v, хочу только prod-a", got.EnvTags)
 	}
 }
+
+func TestUnknownBoldHeaderClosesProjects(t *testing.T) {
+	// После Projects в задачах идут секции Reindex, Patch, Config и подписи
+	// From / Release Notes. Их строки похожи на сервисы, но составом не являются.
+	description := `
+*Projects:*
+ # redo-backend: main-1.29.17
+
+*Reindex:*
+ # nuxeo — после migrateEsedoIdToString.js
+
+*Patch:*
+ # redo-backend: setRegDataForDocumentPointPatch
+
+*Доп. условия:*
+ # Теги не новее PROJ-2: backend 1.29.17 (не 1.29.18)
+
+*From:* main
+
+*Release Notes:* [https://notes.example/page]
+`
+	got, ok := ParseIssue("PROJ-1", "Release 68", description, time.Time{})
+	if !ok {
+		t.Fatal("задача не распознана")
+	}
+	if len(got.Skipped) != 0 {
+		t.Errorf("Skipped = %q, хочу пусто: строки вне Projects не разбираются", got.Skipped)
+	}
+	if tags := got.TagsFor("prod-a"); len(tags) != 1 || tags["redo-backend"].Version.Patch != 17 {
+		t.Errorf("состав = %v, хочу только redo-backend 1.29.17", tags)
+	}
+}
+
+func TestBoldProjectLineIsNotHeader(t *testing.T) {
+	// Жирная строка сервиса похожа на заголовок, но двоеточие не перед звёздочкой.
+	got, ok := ParseIssue("PROJ-1", "Release 68", "*Projects:*\n*backend: main-1.29.0*\n*front: main-1.29.0*", time.Time{})
+	if !ok || len(got.TagsFor("prod-a")) != 2 {
+		t.Fatalf("жирные строки сервисов потеряны: ok=%v task=%+v", ok, got)
+	}
+}
