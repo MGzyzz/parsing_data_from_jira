@@ -249,3 +249,17 @@ func TestNormalizeService(t *testing.T) {
 		})
 	}
 }
+
+func TestFullImageReferences(t *testing.T) {
+	for _, ref := range []string{"registry.example/team/redo-backend:main-1.29.13", "registry.example:5000/team/redo-backend:main-1.29.13", "registry.example/team/redo-backend:main-1.29.13@sha256:abcdef"} {
+		got, err := ParseImage(ref)
+		if err != nil || got.Service != "redo-backend" || got.Version.Patch != 13 {
+			t.Fatalf("%s: %+v %v", ref, got, err)
+		}
+	}
+	for _, ref := range []string{"registry.example:5000/team/redo-backend", "redo-backend@sha256:abcdef", "redo-backend:main-1.999999999999999999999999.0"} {
+		if _, err := ParseImage(ref); err == nil {
+			t.Errorf("accepted %s", ref)
+		}
+	}
+}

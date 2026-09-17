@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -13,8 +13,10 @@ import (
 
 // Config — параметры подключения к Jira.
 type Config struct {
-	URL string // база вида https://jira.metadoc.kz, без хвостового /
-	JQL string
+	URL          string // база вида https://jira.metadoc.kz, без хвостового /
+	JQL          string
+	FetchTimeout time.Duration
+	Logger       *slog.Logger
 }
 
 // Client читает задачи релизов через REST API v2.
@@ -29,7 +31,13 @@ type Client struct {
 // Вызывающий код настраивает авторизацию и транспорт ReadOnly.
 func New(cfg Config, httpClient *http.Client) *Client {
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
+	if cfg.FetchTimeout <= 0 {
+		cfg.FetchTimeout = 2 * time.Minute
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
 	}
 	return &Client{cfg: cfg, http: httpClient, pageSize: searchPageSize}
 }
@@ -40,8 +48,10 @@ const searchPageSize = 100
 const jiraTimeLayout = "2006-01-02T15:04:05.000-0700"
 
 // Fetch загружает все страницы поиска и возвращает распознанные задачи релизов.
-// Задачи, не прошедшие ParseIssue, пропускаются без записи в лог.
+// Ошибки отдельных задач диагностируются и не прерывают остальные страницы.
 func (c *Client) Fetch(ctx context.Context) ([]ReleaseTask, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.FetchTimeout)
+	defer cancel()
 	var tasks []ReleaseTask
 
 	startAt := 0
@@ -52,12 +62,22 @@ func (c *Client) Fetch(ctx context.Context) ([]ReleaseTask, error) {
 		}
 
 		for _, iss := range page.Issues {
+			if iss.Fields.Status.Category.Key != "done" {
+				c.cfg.Logger.Info("задача Jira пропущена", "key", iss.Key, "reason", "статус не завершён или отсутствует")
+				continue
+			}
 			created, err := time.Parse(jiraTimeLayout, iss.Fields.Created)
 			if err != nil {
-				return nil, fmt.Errorf("задача %s: поле created %q: %w", iss.Key, iss.Fields.Created, err)
+				c.cfg.Logger.Warn("задача Jira пропущена", "key", iss.Key, "reason", "некорректная дата created")
+				continue
 			}
 			if task, ok := ParseIssue(iss.Key, iss.Fields.Summary, iss.Fields.Description, created); ok {
+				for range task.Skipped {
+					c.cfg.Logger.Warn("строка Jira пропущена", "key", iss.Key, "reason", "неразобранный тег или список сред")
+				}
 				tasks = append(tasks, task)
+			} else {
+				c.cfg.Logger.Info("задача Jira пропущена", "key", iss.Key, "reason", "нет номера релиза/HF или состава Projects")
 			}
 		}
 
@@ -76,6 +96,11 @@ type searchResponse struct {
 			Summary     string `json:"summary"`
 			Description string `json:"description"`
 			Created     string `json:"created"`
+			Status      struct {
+				Category struct {
+					Key string `json:"key"`
+				} `json:"statusCategory"`
+			} `json:"status"`
 		} `json:"fields"`
 	} `json:"issues"`
 }
@@ -83,7 +108,7 @@ type searchResponse struct {
 func (c *Client) search(ctx context.Context, startAt int) (searchResponse, error) {
 	body, err := json.Marshal(map[string]any{
 		"jql":        c.cfg.JQL,
-		"fields":     []string{"summary", "description", "created"},
+		"fields":     []string{"summary", "description", "created", "status"},
 		"startAt":    startAt,
 		"maxResults": c.pageSize,
 	})
@@ -100,13 +125,15 @@ func (c *Client) search(ctx context.Context, startAt int) (searchResponse, error
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return searchResponse{}, fmt.Errorf("запрос к Jira: %w", err)
+		if ctx.Err() != nil {
+			return searchResponse{}, ctx.Err()
+		}
+		return searchResponse{}, fmt.Errorf("ошибка HTTP-запроса к Jira")
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return searchResponse{}, fmt.Errorf("Jira ответила %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+		return searchResponse{}, fmt.Errorf("Jira ответила HTTP %d", resp.StatusCode)
 	}
 
 	var out searchResponse

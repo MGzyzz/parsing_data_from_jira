@@ -25,7 +25,12 @@ func (s *sheetServer) start(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && !strings.Contains(r.URL.Path, "/values/"):
+			json.NewEncoder(w).Encode(sheets.Spreadsheet{Sheets: []*sheets.Sheet{{Properties: &sheets.SheetProperties{SheetId: 123, Title: "Other"}}, {Properties: &sheets.SheetProperties{SheetId: 0, Title: "Registry"}}}})
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/values/"):
+			if !strings.HasSuffix(r.URL.Path, "'Registry'!A:I") {
+				t.Errorf("wrong read range: %s", r.URL.Path)
+			}
 			s.reads++
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(sheets.ValueRange{Values: s.values})
@@ -134,7 +139,7 @@ func TestUpdateWritesOnlyChangedCells(t *testing.T) {
 	if got := len(s.updates.Data); got != 1 {
 		t.Fatalf("диапазонов в batchUpdate %d, хочу 1", got)
 	}
-	if rng := s.updates.Data[0].Range; rng != "G2" {
+	if rng := s.updates.Data[0].Range; rng != "'Registry'!G2" {
 		t.Errorf("диапазон %q, хочу G2: трогаем только колонку Release", rng)
 	}
 }
@@ -206,5 +211,30 @@ func TestUpdateSendsRawValues(t *testing.T) {
 	}
 	if s.updates.ValueInputOption != "RAW" {
 		t.Errorf("ValueInputOption = %q, хочу RAW", s.updates.ValueInputOption)
+	}
+}
+
+func TestRejectShiftedOrNamedRanges(t *testing.T) {
+	for _, rng := range []string{"A2:I", "B:I", "'Other'!A:I"} {
+		if _, err := New(t.Context(), Config{Range: rng}, option.WithoutAuthentication()); err == nil {
+			t.Errorf("accepted %s", rng)
+		}
+	}
+}
+
+func TestMissingTargetTabFailsWithoutWriting(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/values") {
+			t.Error("values accessed without target tab")
+		}
+		json.NewEncoder(w).Encode(sheets.Spreadsheet{Sheets: []*sheets.Sheet{{Properties: &sheets.SheetProperties{SheetId: 42, Title: "Other"}}}})
+	}))
+	defer srv.Close()
+	c, err := New(t.Context(), Config{SpreadsheetID: "copy", Range: "A:I"}, option.WithHTTPClient(srv.Client()), option.WithEndpoint(srv.URL), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.List(t.Context()); err == nil {
+		t.Fatal("missing gid=0 accepted")
 	}
 }

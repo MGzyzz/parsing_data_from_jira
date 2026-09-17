@@ -22,8 +22,9 @@ type EnvState struct {
 
 // Baseline — базовые теги задачи Release N из Jira.
 type Baseline struct {
-	Number int
-	Tags   map[string]tag.Tag // сервис -> тег из секции Projects
+	Number   int
+	Hotfixes []map[string]tag.Tag // составы HF после базового релиза для этой среды
+	Tags     map[string]tag.Tag   // сервис -> тег из секции Projects
 }
 
 // Config — правила расчёта, приходят из переменных окружения.
@@ -40,9 +41,9 @@ type Result struct {
 	Release       int // 0 означает «не определён»
 	HasHF         bool
 	MinorMismatch bool // кор-сервисы разъехались по minor
-	JiraMismatch  bool // сверка с задачей релиза не сошлась
-	Details       []string
-	CollectedAt   time.Time
+	JiraMismatch    bool // сверка с задачей релиза не сошлась
+	Details         []string
+	CollectedAt     time.Time
 }
 
 // Defined сообщает, удалось ли определить релиз.
@@ -68,7 +69,15 @@ func Compute(state EnvState, base *Baseline, cfg Config) Result {
 		res.Details = append(res.Details, "образ вне схемы версий: "+image)
 	}
 
-	latest := latestByService(state.Tags)
+	eligible := make([]tag.Tag, 0, len(state.Tags))
+	for _, t := range state.Tags {
+		if t.Eligible() {
+			eligible = append(eligible, t)
+		} else {
+			res.Details = append(res.Details, "образ вне схемы релиза: "+t.Raw)
+		}
+	}
+	latest := latestByService(eligible)
 	core := coreSet(cfg.CoreServices)
 
 	minor, mismatch, details, ok := coreMinor(latest, core)
@@ -84,7 +93,61 @@ func Compute(state EnvState, base *Baseline, cfg Config) Result {
 	res.MinorMismatch = mismatch
 	res.JiraMismatch = base == nil || base.Number != res.Release
 
-	hf, hfDetails := hasHotfix(latest, core, base)
+	// Неподходящие базовые теги не должны скрывать HF реальной среды.
+	var valid *Baseline
+	if base != nil && base.Number == res.Release {
+		valid = &Baseline{Number: base.Number, Tags: map[string]tag.Tag{}, Hotfixes: base.Hotfixes}
+		for service, bt := range base.Tags {
+			if !bt.Eligible() && !core[service] {
+				res.Details = append(res.Details, "базовый тег вне схемы релиза: "+service)
+				continue
+			}
+			if !bt.Eligible() || (core[service] && bt.Version.Minor != minor) {
+				res.JiraMismatch = true
+				res.Details = append(res.Details, "базовый тег Jira не соответствует релизу: "+service)
+				continue
+			}
+			valid.Tags[service] = bt
+		}
+		for service := range latest {
+			if core[service] {
+				if _, ok := valid.Tags[service]; !ok {
+					res.JiraMismatch = true
+					res.Details = append(res.Details, "нет корректной базы кор-сервиса: "+service)
+				}
+			}
+		}
+	} else {
+		res.Details = append(res.Details, "база Jira для релиза не найдена")
+	}
+	hf, hfDetails := hasHotfix(latest, core, valid)
+	if valid != nil {
+		for service, t := range latest {
+			bt, found := valid.Tags[service]
+			if !found {
+				continue
+			}
+			newer := t.Version.Compare(bt.Version) > 0
+			if core[service] {
+				newer = t.Version.Patch > bt.Version.Patch
+			}
+			if !newer {
+				continue
+			}
+			confirmed := false
+			for _, tags := range valid.Hotfixes {
+				ht, ok := tags[service]
+				if ok && ht.Eligible() && ht.Branch == t.Branch && ht.Version == t.Version {
+					confirmed = true
+					break
+				}
+			}
+			if !confirmed {
+				res.JiraMismatch = true
+				res.Details = append(res.Details, "тег не подтверждён HF после релиза: "+t.Raw)
+			}
+		}
+	}
 	res.HasHF = hf
 	res.Details = append(res.Details, hfDetails...)
 

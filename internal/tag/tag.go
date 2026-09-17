@@ -33,11 +33,17 @@ var versionTag = regexp.MustCompile(`^(?:([a-z]+)-)?(\d+)\.(\d+)\.(\d+)(?:-(.+))
 
 // ParseImage разбирает ссылку на образ вида "redo-backend:main-1.29.13".
 func ParseImage(image string) (Tag, error) {
-	name, version, ok := strings.Cut(image, ":")
-	if !ok || name == "" {
+	reference, _, _ := strings.Cut(image, "@")
+	colon := strings.LastIndex(reference, ":")
+	slash := strings.LastIndex(reference, "/")
+	if colon <= slash || colon == 0 {
 		return Tag{}, fmt.Errorf("%q: нет тега: %w", image, ErrNotVersionTag)
 	}
 
+	name, version := reference[slash+1:colon], reference[colon+1:]
+	if name == "" {
+		return Tag{}, ErrNotVersionTag
+	}
 	v, branch, err := parseVersion(version)
 	if err != nil {
 		return Tag{}, fmt.Errorf("%q: %w", image, err)
@@ -53,10 +59,12 @@ func parseVersion(s string) (Version, string, error) {
 		return Version{}, "", ErrNotVersionTag
 	}
 
-	// Регулярное выражение проверяет формат чисел; переполнение здесь не обрабатывается.
-	major, _ := strconv.Atoi(m[2])
-	minor, _ := strconv.Atoi(m[3])
-	patch, _ := strconv.Atoi(m[4])
+	major, e1 := strconv.Atoi(m[2])
+	minor, e2 := strconv.Atoi(m[3])
+	patch, e3 := strconv.Atoi(m[4])
+	if e1 != nil || e2 != nil || e3 != nil {
+		return Version{}, "", ErrNotVersionTag
+	}
 
 	return Version{Major: major, Minor: minor, Patch: patch, Suffix: m[5]}, m[1], nil
 }
@@ -137,4 +145,9 @@ func ParseProjectLine(line string) (Tag, bool, error) {
 		Version: v,
 		Raw:     raw,
 	}, true, nil
+}
+
+// Eligible сообщает, относится ли тег к схеме релизов из ТЗ.
+func (t Tag) Eligible() bool {
+	return t.Version.Major == 1 && (t.Branch == "main" || t.Branch == "release")
 }

@@ -94,8 +94,9 @@ func ParseIssue(key, summary, description string, created time.Time) (ReleaseTas
 // до первого такого блока теги сохраняются в общий состав.
 func parseDescription(task *ReleaseTask, description string) {
 	var (
-		inProjects bool
-		targets    = []string{mainFlow}
+		inProjects     bool
+		inEnvironments bool
+		targets        = []string{mainFlow}
 	)
 
 	for _, line := range strings.Split(description, "\n") {
@@ -103,13 +104,13 @@ func parseDescription(task *ReleaseTask, description string) {
 
 		if m := sectionHeader.FindStringSubmatch(clean); m != nil {
 			section, rest := strings.ToLower(m[1]), strings.TrimSpace(m[2])
+			inEnvironments = false
 
 			switch section {
 			case "environments", "среды":
 				inProjects = false
-				if envs := splitEnvironments(rest); len(envs) > 0 {
-					targets = envs
-				}
+				inEnvironments = true
+				targets = splitEnvironments(rest)
 			case "projects", "проекты":
 				inProjects = true
 			case "date", "дата":
@@ -123,6 +124,10 @@ func parseDescription(task *ReleaseTask, description string) {
 			continue
 		}
 
+		if inEnvironments {
+			targets = append(targets, splitEnvironments(clean)...)
+			continue
+		}
 		if !inProjects {
 			continue
 		}
@@ -133,6 +138,10 @@ func parseDescription(task *ReleaseTask, description string) {
 			continue
 		}
 		if !ok {
+			continue
+		}
+		if len(targets) == 0 {
+			task.Skipped = append(task.Skipped, "Projects без распознанных сред")
 			continue
 		}
 		for _, env := range targets {
@@ -150,14 +159,15 @@ func splitEnvironments(s string) []string {
 	var envs []string
 	for _, part := range strings.Split(s, ",") {
 		part = strings.TrimSpace(listPrefix.ReplaceAllString(strings.TrimSpace(part), ""))
-		if part != "" {
+		if environmentName.MatchString(part) {
 			envs = append(envs, part)
 		}
 	}
 	return envs
 }
 
-var listPrefix = regexp.MustCompile(`^(?:#+|\d+\.)\s*`)
+var listPrefix = regexp.MustCompile(`^(?:#+|[-•]|\d+\.)\s*`)
+var environmentName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
 func parseDate(s string) (time.Time, bool) {
 	s = strings.TrimSpace(s)

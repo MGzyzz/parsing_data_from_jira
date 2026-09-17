@@ -105,7 +105,7 @@ func TestAuthenticatedSetsBearerHeader(t *testing.T) {
 	defer srv.Close()
 
 	// Authenticated снаружи, ReadOnly у самой сети — как в реальном клиенте.
-	client := &http.Client{Transport: Authenticated("secret-token", ReadOnly(nil))}
+	client := &http.Client{Transport: Authenticated(srv.URL, "secret-token", ReadOnly(nil))}
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/rest/api/2/field", nil)
 
 	resp, err := client.Do(req)
@@ -127,7 +127,7 @@ func TestAuthenticatedDoesNotBypassGuard(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := &http.Client{Transport: Authenticated("secret-token", ReadOnly(nil))}
+	client := &http.Client{Transport: Authenticated(srv.URL, "secret-token", ReadOnly(nil))}
 	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/rest/api/2/issue/X", nil)
 
 	if resp, err := client.Do(req); err == nil {

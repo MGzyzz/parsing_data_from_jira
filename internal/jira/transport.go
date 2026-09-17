@@ -3,6 +3,7 @@ package jira
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -43,10 +44,11 @@ func (g *readOnlyGuard) RoundTrip(r *http.Request) (*http.Response, error) {
 	return g.next.RoundTrip(r)
 }
 
-// bearerAuth проставляет токен во все запросы, ушедшие дальше по цепочке.
+// bearerAuth передаёт токен только настроенному origin Jira.
 type bearerAuth struct {
-	token string
-	next  http.RoundTripper
+	token  string
+	origin *url.URL
+	next   http.RoundTripper
 }
 
 // Authenticated оборачивает транспорт токеном Jira PAT.
@@ -54,14 +56,20 @@ type bearerAuth struct {
 // Клонируем запрос перед правкой: RoundTripper не должен менять r
 // у вызывающего, а исходный *http.Request может быть переиспользован
 // (например, при ретраях выше по стеку).
-func Authenticated(token string, next http.RoundTripper) http.RoundTripper {
+func Authenticated(baseURL, token string, next http.RoundTripper) http.RoundTripper {
 	if next == nil {
 		next = http.DefaultTransport
 	}
-	return &bearerAuth{token: token, next: next}
+	origin, _ := url.Parse(baseURL)
+	return &bearerAuth{token: token, origin: origin, next: next}
 }
 
 func (a *bearerAuth) RoundTrip(r *http.Request) (*http.Response, error) {
+	if a.origin == nil || a.origin.Host == "" || a.origin.User != nil ||
+		(a.origin.Scheme != "https" && a.origin.Scheme != "http") ||
+		r.URL.Scheme != a.origin.Scheme || !strings.EqualFold(r.URL.Host, a.origin.Host) || r.URL.User != nil {
+		return nil, fmt.Errorf("Jira: запрос вне настроенного origin запрещён")
+	}
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", "Bearer "+a.token)
 	return a.next.RoundTrip(r)

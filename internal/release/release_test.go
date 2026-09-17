@@ -253,3 +253,74 @@ func TestComputeCoreServiceAheadWithoutBaseline(t *testing.T) {
 		t.Error("HasHF = false, хочу true: без задачи релиза база патча считается нулевой")
 	}
 }
+
+func TestIneligibleTagsCannotWinRolloutOrTriggerHF(t *testing.T) {
+	st := images(t, "prod-a", "redo-backend:main-1.29.0", "redo-backend:feature-2.99.99", "redo-backend:release-2.99.99", "redo-email:feature-1.99.99")
+	got := Compute(st, release68(t), cfg())
+	if got.Release != 68 || got.HasHF || len(got.Details) < 3 {
+		t.Fatalf("result=%+v", got)
+	}
+	only := Compute(images(t, "prod-a", "redo-backend:feature-2.29.13"), nil, cfg())
+	if only.Defined() {
+		t.Fatalf("ineligible release=%+v", only)
+	}
+}
+
+func TestJiraHotfixVerification(t *testing.T) {
+	st := images(t, "prod-a", "redo-backend:main-1.29.13")
+	base := release68(t)
+	missing := Compute(st, base, cfg())
+	if !missing.HasHF || !missing.JiraMismatch || missing.Cell() != "Release 68 + HF" {
+		t.Fatalf("missing=%+v", missing)
+	}
+	base.Hotfixes = []map[string]tag.Tag{{"redo-backend": st.Tags[0]}}
+	matched := Compute(st, base, cfg())
+	if matched.JiraMismatch || !matched.HasHF {
+		t.Fatalf("matched=%+v", matched)
+	}
+	wrong := baseline(t, 68, "backend: main-1.28.99")
+	got := Compute(st, wrong, cfg())
+	if !got.JiraMismatch || !got.HasHF || got.Release != 68 {
+		t.Fatalf("invalid base masked HF: %+v", got)
+	}
+}
+
+func TestNonCoreOwnVersionAndExactHFTag(t *testing.T) {
+	base := baseline(t, 68, "backend: main-1.29.0", "email: main-1.9.6")
+	st := images(t, "prod-a", "redo-backend:main-1.29.0", "redo-email:main-1.9.7")
+	base.Hotfixes = []map[string]tag.Tag{{"redo-email": st.Tags[1]}}
+	got := Compute(st, base, cfg())
+	if got.Release != 68 || !got.HasHF || got.JiraMismatch {
+		t.Fatalf("result=%+v", got)
+	}
+	ht := st.Tags[1]
+	ht.Branch = "release"
+	base.Hotfixes[0]["redo-email"] = ht
+	got = Compute(st, base, cfg())
+	if !got.HasHF || !got.JiraMismatch {
+		t.Fatalf("wrong branch confirmed: %+v", got)
+	}
+}
+
+func TestThirdPartyBaselineDoesNotCreateMismatch(t *testing.T) {
+	base := baseline(t, 68, "backend: main-1.29.0", "onlyoffice-documentserver-unlimited: 8.3.3")
+	got := Compute(images(t, "prod-a", "redo-backend:main-1.29.0", "onlyoffice-documentserver-unlimited:8.3.4"), base, cfg())
+	if got.HasHF || got.JiraMismatch || got.Release != 68 {
+		t.Fatalf("third-party affected result: %+v", got)
+	}
+}
+
+func TestComputeSyntheticRelease69(t *testing.T) {
+	st := images(t, "prod-holding",
+		"redo-nuxeo:main-1.30.0",
+		"redo-backend:main-1.30.0",
+		"redo-camunda:main-1.30.0",
+		"redo-front:main-1.30.0",
+		"redo-integration:main-1.30.0",
+	)
+	got := Compute(st, nil, cfg())
+	if got.Cell() != "Release 69" || got.HasHF || got.MinorMismatch || !got.JiraMismatch {
+		t.Fatalf("result=%+v", got)
+	}
+	t.Logf("env=%s release=%q minor_mismatch=%v jira_mismatch=%v", got.Environment, got.Cell(), got.MinorMismatch, got.JiraMismatch)
+}

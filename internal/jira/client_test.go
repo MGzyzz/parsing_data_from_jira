@@ -54,6 +54,7 @@ func searchServer(t *testing.T, pages [][]issueStub, total int) *httptest.Server
 					"summary":     iss.summary,
 					"description": iss.description,
 					"created":     iss.created,
+					"status":      map[string]any{"statusCategory": map[string]string{"key": "done"}},
 				},
 			})
 		}

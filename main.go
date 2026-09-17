@@ -117,7 +117,7 @@ func build(ctx context.Context, cfg config.Config, write bool, only string, log 
 		return nil, fmt.Errorf("клиент реестра: %w", err)
 	}
 
-	jiraHTTP := &http.Client{Transport: jira.Authenticated(cfg.Jira.Token, jira.ReadOnly(nil))}
+	jiraHTTP := &http.Client{Transport: jira.Authenticated(cfg.Jira.URL, cfg.Jira.Token, jira.ReadOnly(nil)), Timeout: 30 * time.Second}
 	jiraCli := jira.New(jira.Config{URL: cfg.Jira.URL, JQL: cfg.Jira.JQL}, jiraHTTP)
 
 	var collector app.Collector = gitlab.Stub{}

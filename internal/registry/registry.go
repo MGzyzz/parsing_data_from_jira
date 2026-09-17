@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"google.golang.org/api/option"
 	"google.golang.org/api/sheets/v4"
@@ -55,6 +56,9 @@ type Client struct {
 
 // New создаёт клиент Sheets с параметрами авторизации из opts.
 func New(ctx context.Context, cfg Config, opts ...option.ClientOption) (*Client, error) {
+	if cfg.Range != "A:I" {
+		return nil, fmt.Errorf("SHEET_RANGE должен быть A:I; используется вкладка gid=0 с заголовком в строке 1")
+	}
 	srv, err := sheets.NewService(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("клиент Sheets: %w", err)
@@ -71,7 +75,7 @@ func New(ctx context.Context, cfg Config, opts ...option.ClientOption) (*Client,
 // Дубли среды не склеиваются: у лишних строк статус пустой, и фильтр
 // по статусу отсеивает их сам.
 func (c *Client) List(ctx context.Context) ([]Row, error) {
-	values, err := c.read(ctx)
+	values, _, err := c.read(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +117,9 @@ func (c *Client) Update(ctx context.Context, updates []Update) (int, error) {
 		return 0, nil
 	}
 
-	values, err := c.read(ctx)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	values, sheet, err := c.read(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -130,7 +136,7 @@ func (c *Client) Update(ctx context.Context, updates []Update) (int, error) {
 			continue
 		}
 		data = append(data, &sheets.ValueRange{
-			Range:  fmt.Sprintf("%s%d", releaseColumn, u.Row.Number),
+			Range:  fmt.Sprintf("%s!%s%d", sheet, releaseColumn, u.Row.Number),
 			Values: [][]any{{u.Value}},
 		})
 	}
@@ -149,12 +155,29 @@ func (c *Client) Update(ctx context.Context, updates []Update) (int, error) {
 	return len(data), nil
 }
 
-func (c *Client) read(ctx context.Context) ([][]any, error) {
-	resp, err := c.sheets.Spreadsheets.Values.Get(c.cfg.SpreadsheetID, c.cfg.Range).Context(ctx).Do()
+// read находит вкладку по стабильному gid, а не по её позиции в таблице.
+func (c *Client) read(ctx context.Context) ([][]any, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	meta, err := c.sheets.Spreadsheets.Get(c.cfg.SpreadsheetID).Fields("sheets.properties").Context(ctx).Do()
 	if err != nil {
-		return nil, fmt.Errorf("прочитать реестр: %w", err)
+		return nil, "", fmt.Errorf("метаданные реестра: %w", err)
 	}
-	return resp.Values, nil
+	sheet := ""
+	for _, tab := range meta.Sheets {
+		if tab.Properties != nil && tab.Properties.SheetId == 0 {
+			sheet = "'" + strings.ReplaceAll(tab.Properties.Title, "'", "''") + "'"
+			break
+		}
+	}
+	if sheet == "" {
+		return nil, "", fmt.Errorf("вкладка gid=0 не найдена")
+	}
+	resp, err := c.sheets.Spreadsheets.Values.Get(c.cfg.SpreadsheetID, sheet+"!A:I").Context(ctx).Do()
+	if err != nil {
+		return nil, "", fmt.Errorf("прочитать реестр: %w", err)
+	}
+	return resp.Values, sheet, nil
 }
 
 // wanted сверяет статус без учёта регистра и пробелов: колонку заполняют руками.

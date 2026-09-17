@@ -134,7 +134,10 @@ func (a *App) Run(ctx context.Context) error {
 			a.log.Info("релиз не определён", "env", o.row.Name, "details", o.result.Details)
 		default:
 			a.log.Info("релиз определён", "env", o.row.Name, "release", o.result.Cell(),
-				"minor_mismatch", o.result.MinorMismatch, "jira_mismatch", o.result.JiraMismatch)
+				"minor_mismatch", o.result.MinorMismatch, "jira_mismatch", o.result.JiraMismatch, "details", o.result.Details)
+			if o.result.MinorMismatch || o.result.JiraMismatch {
+				a.log.Warn("расхождение версий", "env", o.row.Name, "details", o.result.Details)
+			}
 			updates = append(updates, registry.Update{Row: o.row, Value: o.result.Cell()})
 		}
 	}
@@ -231,18 +234,31 @@ func (a *App) collectOne(ctx context.Context, row registry.Row, tasks []jira.Rel
 	return outcome{row: row, result: release.Compute(state, base, a.cfg.Release)}
 }
 
-// baselineFor возвращает базовые теги первой задачи с указанным номером
-// релиза. Задачи HF исключаются. Для среды выбирается её блок тегов
-// или общий состав, если отдельного блока нет.
+// baselineFor выбирает последнюю по дате базовую задачу релиза и последующие HF.
+// Для среды используется её блок тегов или общий состав, если отдельного блока нет.
 func baselineFor(tasks []jira.ReleaseTask, number int, environment string) *release.Baseline {
 	if number == 0 {
 		return nil
 	}
-	for _, t := range tasks {
-		if t.IsHF || t.Number != number {
+	var selected *jira.ReleaseTask
+	for i := range tasks {
+		t := &tasks[i]
+		if t.IsHF || t.Number != number || len(t.TagsFor(environment)) == 0 {
 			continue
 		}
-		return &release.Baseline{Number: t.Number, Tags: t.TagsFor(environment)}
+		// Стабильный выбор при нескольких задачах одного релиза.
+		if selected == nil || t.Date.After(selected.Date) || (t.Date.Equal(selected.Date) && t.Key < selected.Key) {
+			selected = t
+		}
 	}
-	return nil
+	if selected == nil {
+		return nil
+	}
+	base := &release.Baseline{Number: selected.Number, Tags: selected.TagsFor(environment)}
+	for _, t := range tasks {
+		if t.IsHF && t.Date.After(selected.Date) {
+			base.Hotfixes = append(base.Hotfixes, t.TagsFor(environment))
+		}
+	}
+	return base
 }
