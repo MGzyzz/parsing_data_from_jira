@@ -11,6 +11,7 @@ import (
 // full — полный набор переменных из ТЗ.
 func full() map[string]string {
 	return map[string]string{
+		"IMAGE_COLLECTOR":           "gitlab",
 		"GITLAB_URL":                "https://gitlab.example.kz",
 		"GITLAB_TOKEN":              "glpat-xxx",
 		"COLLECT_IMAGES_PROJECT_ID": "234",
@@ -208,5 +209,26 @@ func TestLoadOverridesRejectsBadInterval(t *testing.T) {
 
 	if _, err := LoadOverrides(path); err == nil {
 		t.Fatal("LoadOverrides принял нечитаемый interval")
+	}
+}
+
+func TestStubDoesNotRequireGitLabCredentials(t *testing.T) {
+	env := full()
+	for _, key := range []string{"IMAGE_COLLECTOR", "GITLAB_URL", "GITLAB_TOKEN", "COLLECT_IMAGES_PROJECT_ID"} {
+		delete(env, key)
+	}
+	cfg, err := Load(lookup(env))
+	if err != nil || cfg.CollectorMode != "stub" {
+		t.Fatalf("mode=%q err=%v", cfg.CollectorMode, err)
+	}
+}
+
+func TestCollectorRejectsInvalidSettings(t *testing.T) {
+	for key, value := range map[string]string{"IMAGE_COLLECTOR": "unknown", "PIPELINE_TIMEOUT": "0s", "GITLAB_POLL_INTERVAL": "-1s"} {
+		env := full()
+		env[key] = value
+		if _, err := Load(lookup(env)); err == nil {
+			t.Errorf("accepted %s=%s", key, value)
+		}
 	}
 }

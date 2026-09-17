@@ -96,7 +96,7 @@ func runDaemon(ctx context.Context, a *app.App, log *slog.Logger) error {
 	}
 }
 
-// build создаёт клиентов Sheets и Jira, заглушку сборщика и экземпляр App.
+// build создаёт клиентов источников данных и экземпляр App.
 func build(ctx context.Context, cfg config.Config, write bool, only string, log *slog.Logger) (*app.App, error) {
 	overrides, err := config.LoadOverrides(cfg.OverridesFile)
 	if err != nil {
@@ -120,8 +120,17 @@ func build(ctx context.Context, cfg config.Config, write bool, only string, log 
 	jiraHTTP := &http.Client{Transport: jira.Authenticated(cfg.Jira.Token, jira.ReadOnly(nil))}
 	jiraCli := jira.New(jira.Config{URL: cfg.Jira.URL, JQL: cfg.Jira.JQL}, jiraHTTP)
 
-	// Сбор образов выполняется заглушкой; пайплайны GitLab не запускаются.
-	collector := gitlab.Stub{}
+	var collector app.Collector = gitlab.Stub{}
+	if cfg.CollectorMode == "gitlab" {
+		collector, err = gitlab.New(gitlab.Config{
+			URL: cfg.GitLab.URL, Token: cfg.GitLab.Token,
+			ProjectID: cfg.GitLab.ProjectID, Ref: cfg.GitLab.Ref,
+			PollInterval: cfg.GitLab.PollInterval, Scenario: cfg.GitLab.Scenario,
+		}, nil, log)
+		if err != nil {
+			return nil, fmt.Errorf("клиент GitLab: %w", err)
+		}
+	}
 
 	return app.New(reg, collector, jiraCli, overrides, app.Config{
 		Concurrency:     cfg.Concurrency,

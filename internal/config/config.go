@@ -16,6 +16,7 @@ import (
 
 // Config — все настройки одного прогона.
 type Config struct {
+	CollectorMode   string
 	GitLab          GitLab
 	Jira            Jira
 	Sheet           Sheet
@@ -27,10 +28,12 @@ type Config struct {
 
 // GitLab — доступ к пайплайну collect-images.
 type GitLab struct {
-	URL       string
-	Token     string
-	ProjectID int
-	Ref       string
+	URL          string
+	Token        string
+	ProjectID    int
+	Ref          string
+	PollInterval time.Duration
+	Scenario     string
 }
 
 // Jira — доступ к задачам релизов. Только чтение.
@@ -67,12 +70,16 @@ func OSLookup(key string) (string, bool) { return os.LookupEnv(key) }
 func Load(env Lookup) (Config, error) {
 	l := loader{env: env}
 
+	mode := l.str("IMAGE_COLLECTOR", "stub")
 	cfg := Config{
+		CollectorMode: mode,
 		GitLab: GitLab{
-			URL:       l.required("GITLAB_URL"),
-			Token:     l.required("GITLAB_TOKEN"),
-			ProjectID: l.intVal("COLLECT_IMAGES_PROJECT_ID", 0),
-			Ref:       l.str("COLLECT_IMAGES_REF", "main"),
+			URL:          l.str("GITLAB_URL", ""),
+			Token:        l.str("GITLAB_TOKEN", ""),
+			ProjectID:    l.intVal("COLLECT_IMAGES_PROJECT_ID", 0),
+			Ref:          l.str("COLLECT_IMAGES_REF", "main"),
+			PollInterval: l.duration("GITLAB_POLL_INTERVAL", 3*time.Second),
+			Scenario:     l.str("GITLAB_MOCK_SCENARIO", ""),
 		},
 		Jira: Jira{
 			URL:   l.required("JIRA_URL"),
@@ -94,11 +101,25 @@ func Load(env Lookup) (Config, error) {
 		OverridesFile:   l.str("OVERRIDES_FILE", "overrides.yaml"),
 	}
 
+	if cfg.Sheet.Range != "A:I" {
+		l.errs = append(l.errs, errors.New("SHEET_RANGE должен быть A:I (вкладка gid=0)"))
+	}
+
 	// Для обработки сред требуется хотя бы один рабочий слот.
 	if cfg.Concurrency < 1 {
 		l.errs = append(l.errs, errors.New("CONCURRENCY должен быть больше нуля"))
 	}
-	if cfg.GitLab.ProjectID < 1 {
+	if mode != "stub" && mode != "gitlab" {
+		l.errs = append(l.errs, errors.New("IMAGE_COLLECTOR должен быть stub или gitlab"))
+	}
+	if cfg.PipelineTimeout <= 0 || cfg.GitLab.PollInterval <= 0 {
+		l.errs = append(l.errs, errors.New("PIPELINE_TIMEOUT и GITLAB_POLL_INTERVAL должны быть положительными"))
+	}
+	if mode == "gitlab" {
+		l.required("GITLAB_URL")
+		l.required("GITLAB_TOKEN")
+	}
+	if mode == "gitlab" && cfg.GitLab.ProjectID < 1 {
 		l.errs = append(l.errs, errors.New("COLLECT_IMAGES_PROJECT_ID должен быть больше нуля"))
 	}
 

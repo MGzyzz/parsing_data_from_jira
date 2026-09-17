@@ -208,7 +208,19 @@ func (a *App) collectOne(ctx context.Context, row registry.Row, tasks []jira.Rel
 	cctx, cancel := context.WithTimeout(ctx, a.cfg.PipelineTimeout)
 	defer cancel()
 
-	state, err := a.collector.Collect(cctx, environment)
+	var state release.EnvState
+	var err error
+	if ov.TagsName != "" {
+		collector, ok := a.collector.(interface {
+			CollectWithRunner(context.Context, string, string) (release.EnvState, error)
+		})
+		if !ok {
+			return outcome{row: row, err: fmt.Errorf("сборщик не поддерживает tags_name")}
+		}
+		state, err = collector.CollectWithRunner(cctx, environment, ov.TagsName)
+	} else {
+		state, err = a.collector.Collect(cctx, environment)
+	}
 	if err != nil {
 		return outcome{row: row, err: fmt.Errorf("сбор образов: %w", err)}
 	}
