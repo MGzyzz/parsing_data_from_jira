@@ -1,7 +1,11 @@
 # Секреты — никогда в репозиторий
 .env
+.env.*
+!.env.example
 env.sh
 secrets/
+*token*.json
+*client_secret*.json
 *credentials*.json
 *service-account*.json
 

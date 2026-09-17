@@ -1,7 +1,10 @@
 # Секреты — не должны попасть в build context, даже временно.
 .env
+.env.*
+!.env.example
 env.sh
 secrets/
+*client_secret*.json
 *credentials*.json
 *service-account*.json
 *token*.json
