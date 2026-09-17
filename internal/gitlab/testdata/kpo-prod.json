@@ -1,0 +1,33 @@
+{
+  "environment": "kpo-prod",
+  "namespace": "kpo-prod",
+  "collected_at": "2026-09-17T06:34:04Z",
+  "images": [
+    "centrifugo:v5.1.2",
+    "dsn-test:kpo-prod-117882",
+    "ncanode:kpo-prod-129734",
+    "onlyoffice-documentserver-unlimited:8.3.3",
+    "onlyoffice-documentserver-unlimited:8.3.3-preview-06-08-25_17-05",
+    "redo-backend:main-1.29.17",
+    "redo-calendar:main-1.26.0",
+    "redo-camunda:main-1.29.14",
+    "redo-check-docs:kpo-prod-145460",
+    "redo-drive:main-1.1.0",
+    "redo-dynamic-dict:main-1.1.0",
+    "redo-egov-sign:main-1.0.1",
+    "redo-email:main-1.29.0",
+    "redo-enbek-integration:release-1.29.0",
+    "redo-event:main-1.28.0",
+    "redo-front:kpo-prod-164897",
+    "redo-integration:main-1.29.2",
+    "redo-keycloak:main-1.28.0",
+    "redo-notification:main-1.29.2",
+    "redo-nuxeo:main-1.29.4",
+    "redo-report-data:main-1.28.0",
+    "redo-superset-custom:kpo-prod-158213",
+    "redo-superset-saved-reports:main-1.0.2",
+    "redo-survey-back:main-1.0.0.1",
+    "redo-survey-front:kpo-prod-117863",
+    "redo-wiki:main-1.29.0"
+  ]
+}

@@ -64,6 +64,18 @@ func TestStubCollectReadsFixture(t *testing.T) {
 	}
 }
 
+func TestStubCollectKpoProdRealArtifact(t *testing.T) {
+	// Реальный images.json, присланный 2026-09-17: образы с тегами сборок среды
+	// (kpo-prod-NNNNNN), сторонние версии и версия из четырёх чисел.
+	state, err := Stub{}.Collect(t.Context(), "kpo-prod")
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(state.Tags) != 18 || len(state.Unparsed) != 8 {
+		t.Errorf("Tags/Unparsed = %d/%d, хочу 18/8: unparsed=%v", len(state.Tags), len(state.Unparsed), state.Unparsed)
+	}
+}
+
 func TestStubCollectPropagatesEmptyImagesError(t *testing.T) {
 	_, err := Stub{}.Collect(t.Context(), "broken-env")
 	if err == nil {

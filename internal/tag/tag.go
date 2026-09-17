@@ -33,16 +33,9 @@ var versionTag = regexp.MustCompile(`^(?:([a-z]+)-)?(\d+)\.(\d+)\.(\d+)(?:-(.+))
 
 // ParseImage разбирает ссылку на образ вида "redo-backend:main-1.29.13".
 func ParseImage(image string) (Tag, error) {
-	reference, _, _ := strings.Cut(image, "@")
-	colon := strings.LastIndex(reference, ":")
-	slash := strings.LastIndex(reference, "/")
-	if colon <= slash || colon == 0 {
+	name, version, ok := splitImage(image)
+	if !ok || name == "" {
 		return Tag{}, fmt.Errorf("%q: нет тега: %w", image, ErrNotVersionTag)
-	}
-
-	name, version := reference[slash+1:colon], reference[colon+1:]
-	if name == "" {
-		return Tag{}, ErrNotVersionTag
 	}
 	v, branch, err := parseVersion(version)
 	if err != nil {
@@ -50,6 +43,20 @@ func ParseImage(image string) (Tag, error) {
 	}
 
 	return Tag{Service: name, Branch: branch, Version: v, Raw: image}, nil
+}
+
+// ImageService возвращает имя сервиса из ссылки на образ, даже если тег
+// не по схеме версий: кор-сервис со сборкой среды надо узнать по имени.
+func ImageService(image string) string {
+	name, _, _ := splitImage(image)
+	return name
+}
+
+// splitImage отделяет имя образа от тега, отбрасывая адрес реестра и дайджест.
+// Двоеточие порта реестра стоит до последнего слеша и в имя не попадает.
+func splitImage(image string) (name, version string, ok bool) {
+	reference, _, _ := strings.Cut(image, "@")
+	return strings.Cut(reference[strings.LastIndex(reference, "/")+1:], ":")
 }
 
 // parseVersion разбирает "main-1.29.13" на версию и ветку.

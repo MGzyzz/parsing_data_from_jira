@@ -41,6 +41,9 @@ type Result struct {
 	Release       int // 0 означает «не определён»
 	HasHF         bool
 	MinorMismatch bool // кор-сервисы разъехались по minor
+	// CoreUnversioned — у кор-сервиса нет тега по схеме релиза (сборка среды,
+	// как redo-front:kpo-prod-164897), и релиз посчитан без него.
+	CoreUnversioned bool
 	JiraMismatch    bool // сверка с задачей релиза не сошлась
 	Details         []string
 	CollectedAt     time.Time
@@ -79,6 +82,10 @@ func Compute(state EnvState, base *Baseline, cfg Config) Result {
 	}
 	latest := latestByService(eligible)
 	core := coreSet(cfg.CoreServices)
+
+	unversioned := unversionedCore(state, latest, core)
+	res.CoreUnversioned = len(unversioned) > 0
+	res.Details = append(res.Details, unversioned...)
 
 	minor, mismatch, details, ok := coreMinor(latest, core)
 	res.Details = append(res.Details, details...)
@@ -166,6 +173,27 @@ func latestByService(tags []tag.Tag) map[string]tag.Tag {
 		latest[t.Service] = t
 	}
 	return latest
+}
+
+// unversionedCore перечисляет образы кор-сервисов, у которых нет ни одного
+// тега по схеме релиза. Во время накатки со сборки среды на версию
+// версионный тег уже есть, и сервис в расчёте участвует — это не пометка.
+func unversionedCore(state EnvState, latest map[string]tag.Tag, core map[string]bool) []string {
+	var details []string
+	check := func(service, image string) {
+		if _, versioned := latest[service]; core[service] && !versioned {
+			details = append(details, "кор-сервис без версионного тега: "+image)
+		}
+	}
+	for _, image := range state.Unparsed {
+		check(tag.ImageService(image), image)
+	}
+	for _, t := range state.Tags {
+		if !t.Eligible() {
+			check(t.Service, t.Raw)
+		}
+	}
+	return details
 }
 
 func coreSet(services []string) map[string]bool {

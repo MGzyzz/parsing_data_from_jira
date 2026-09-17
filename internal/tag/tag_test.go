@@ -44,6 +44,13 @@ func TestParseImage(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			// Под наблюдением: версия из четырёх чисел (kpo-prod, redo-survey-back).
+			// Схема ТЗ — main-1.minor.patch, поэтому образ идёт в детали.
+			name:    "четыре числа в версии",
+			in:      "redo-survey-back:main-1.0.0.1",
+			wantErr: true,
+		},
+		{
 			name:    "пустая строка",
 			in:      "",
 			wantErr: true,
@@ -260,6 +267,21 @@ func TestFullImageReferences(t *testing.T) {
 	for _, ref := range []string{"registry.example:5000/team/redo-backend", "redo-backend@sha256:abcdef", "redo-backend:main-1.999999999999999999999999.0"} {
 		if _, err := ParseImage(ref); err == nil {
 			t.Errorf("accepted %s", ref)
+		}
+	}
+}
+
+func TestImageService(t *testing.T) {
+	tests := map[string]string{
+		// Тег не по схеме версий, но сервис определить нужно: это кор-сервис.
+		"redo-front:kpo-prod-164897":                                      "redo-front",
+		"registry.example:5000/team/redo-backend:main-1.29.13@sha256:abc": "redo-backend",
+		"busybox": "busybox",
+		"":        "",
+	}
+	for in, want := range tests {
+		if got := ImageService(in); got != want {
+			t.Errorf("ImageService(%q) = %q, хочу %q", in, got, want)
 		}
 	}
 }

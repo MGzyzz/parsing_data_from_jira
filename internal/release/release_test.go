@@ -324,3 +324,66 @@ func TestComputeSyntheticRelease69(t *testing.T) {
 	}
 	t.Logf("env=%s release=%q minor_mismatch=%v jira_mismatch=%v", got.Environment, got.Cell(), got.MinorMismatch, got.JiraMismatch)
 }
+
+func TestComputeFlagsCoreServiceWithoutVersionTag(t *testing.T) {
+	// kpo-prod: фронт собран из ветки среды. Релиз считается по остальным
+	// кор-сервисам, но выпадение фронта из расчёта должно быть заметно.
+	st := images(t, "kpo-prod",
+		"redo-nuxeo:main-1.29.4",
+		"redo-backend:main-1.29.17",
+		"redo-camunda:main-1.29.14",
+		"redo-front:kpo-prod-164897",
+		"redo-integration:main-1.29.2",
+	)
+
+	got := Compute(st, nil, cfg())
+
+	if got.Cell() != "Release 68 + HF" {
+		t.Errorf("Cell() = %q, хочу %q", got.Cell(), "Release 68 + HF")
+	}
+	if !got.CoreUnversioned {
+		t.Error("CoreUnversioned = false, хочу true: redo-front без версионного тега")
+	}
+	if !contains(got.Details, "кор-сервис без версионного тега: redo-front:kpo-prod-164897") {
+		t.Errorf("Details = %v: нет пометки о redo-front", got.Details)
+	}
+}
+
+func TestComputeCoreServiceWithTagOutsideReleaseSchemeIsFlagged(t *testing.T) {
+	st := images(t, "prod-a", "redo-backend:main-1.29.0", "redo-front:feature-1.29.0")
+
+	got := Compute(st, nil, cfg())
+
+	if !got.CoreUnversioned {
+		t.Errorf("CoreUnversioned = false: тег ветки feature не по схеме релиза, details=%v", got.Details)
+	}
+}
+
+func TestComputeCoreRolloutFromBranchBuildIsNotFlagged(t *testing.T) {
+	// Идёт накатка с кастомной сборки на версионную: версионный тег уже есть,
+	// сервис участвует в расчёте, пометка не нужна.
+	st := images(t, "kpo-prod", "redo-backend:main-1.29.0", "redo-front:kpo-prod-164897", "redo-front:main-1.29.0")
+
+	got := Compute(st, nil, cfg())
+
+	if got.CoreUnversioned {
+		t.Errorf("CoreUnversioned = true, хочу false: details=%v", got.Details)
+	}
+}
+
+func TestComputeNonCoreWithoutVersionTagIsNotFlagged(t *testing.T) {
+	st := images(t, "kpo-prod", "redo-backend:main-1.29.0", "redo-check-docs:kpo-prod-145460")
+
+	if got := Compute(st, nil, cfg()); got.CoreUnversioned {
+		t.Errorf("CoreUnversioned = true для не-кор сервиса: details=%v", got.Details)
+	}
+}
+
+func contains(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
