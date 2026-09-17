@@ -181,3 +181,59 @@ func TestParseIssueCollectsUnparsedLines(t *testing.T) {
 		t.Errorf("Skipped = %v, хочу одну строку с нечитаемым тегом", got.Skipped)
 	}
 }
+
+// hfTable — HF в формате задач с сентября 2026 (по образцу DOPS-4920):
+// среды заданы вики-таблицей, одна среда зачёркнута, теги оформлены ссылками.
+const hfTable = `
+*Release:*
+ # HF | 15 Сентября - [https://jira.example/projects/PROJ/versions/1]
+
+*Date:* 15.09.2026
+
+*Environments:*
+||№||Environment||Время||
+|1|dunga-prod|20:00|
+|2|kpo-prod|20:00|
+|37|{-}baiterek-prod{-}(Не накатывать)|22:00|
+
+*Actual environment list:*
+
+*Projects:*
+ # redo-front: main-1.29.22
+ # redo-backend: [main-1.29.17|https://gitlab.example/redo/redo-backend/-/tags/main-1.29.17]
+`
+
+func TestParseIssueHotfixWithEnvironmentTable(t *testing.T) {
+	got, ok := ParseIssue("PROJ-1", "HF Release 15 Сентября (Кроме KEGOC & KEGOC-TEST & baiterek-prod)", hfTable, time.Time{})
+	if !ok {
+		t.Fatal("HF с таблицей сред не распознан")
+	}
+	if len(got.Skipped) != 0 {
+		t.Errorf("Skipped = %q, хочу пусто", got.Skipped)
+	}
+
+	for _, env := range []string{"dunga-prod", "kpo-prod"} {
+		if v := got.TagsFor(env)["redo-backend"].Version; v.Minor != 29 || v.Patch != 17 {
+			t.Errorf("%s redo-backend = %+v, хочу 1.29.17", env, v)
+		}
+	}
+	// Зачёркнутая среда не катилась: HF к ней не относится.
+	if tags := got.TagsFor("baiterek-prod"); len(tags) != 0 {
+		t.Errorf("baiterek-prod получила состав зачёркнутой строки: %v", tags)
+	}
+	// Заголовок таблицы — не среда.
+	if len(got.EnvTags) != 2 {
+		t.Errorf("сред %d, хочу 2 (заголовок и зачёркнутая строка не в счёт): %v", len(got.EnvTags), got.EnvTags)
+	}
+}
+
+func TestStruckEnvironmentInListIsExcluded(t *testing.T) {
+	description := "Environments:\n1. prod-a\n8. {-}prod-b{*}({*}{-}{*}Накатили уже){*}\nProjects:\n# backend: main-1.29.0"
+	got, ok := ParseIssue("PROJ-1", "Release 68", description, time.Time{})
+	if !ok {
+		t.Fatal("задача не распознана")
+	}
+	if _, found := got.EnvTags["prod-b"]; found || len(got.EnvTags) != 1 {
+		t.Errorf("EnvTags = %v, хочу только prod-a", got.EnvTags)
+	}
+}

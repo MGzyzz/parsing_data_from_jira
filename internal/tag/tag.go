@@ -141,7 +141,7 @@ func ParseProjectLine(line string) (Tag, bool, error) {
 		return Tag{}, false, nil // сервис упомянут, но тег не проставлен
 	}
 
-	v, branch, err := parseVersion(fields[0])
+	v, branch, err := parseVersion(linkText(fields[0]))
 	if err != nil {
 		return Tag{}, false, fmt.Errorf("%q: %w", raw, err)
 	}
@@ -152,6 +152,16 @@ func ParseProjectLine(line string) (Tag, bool, error) {
 		Version: v,
 		Raw:     raw,
 	}, true, nil
+}
+
+// linkText снимает вики-ссылку Jira с тега: [main-1.29.17|https://gitlab/...].
+// Адрес ссылки пробелов не содержит, поэтому ссылка целиком — первый токен.
+func linkText(token string) string {
+	if !strings.HasPrefix(token, "[") {
+		return token
+	}
+	text, _, _ := strings.Cut(strings.TrimPrefix(token, "["), "|")
+	return strings.TrimSuffix(text, "]")
 }
 
 // Eligible сообщает, относится ли тег к схеме релизов из ТЗ.

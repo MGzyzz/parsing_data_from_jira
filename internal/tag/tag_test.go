@@ -168,6 +168,22 @@ func TestParseProjectLine(t *testing.T) {
 			want: Tag{Service: "redo-backend", Branch: "main", Version: Version{1, 29, 13, ""}, Raw: "backend: main-1.29.13 откатили и накатили заново"},
 		},
 		{
+			// С сентября 2026 тег в задачах оформляют ссылкой на тег в GitLab.
+			name: "тег ссылкой на GitLab",
+			in:   " # redo-backend: [main-1.29.17|https://gitlab.example/redo/redo-backend/-/tags/main-1.29.17]",
+			want: Tag{Service: "redo-backend", Branch: "main", Version: Version{1, 29, 17, ""}, Raw: "redo-backend: [main-1.29.17|https://gitlab.example/redo/redo-backend/-/tags/main-1.29.17]"},
+		},
+		{
+			name: "тег ссылкой без адреса",
+			in:   " # front: [main-1.29.22]",
+			want: Tag{Service: "redo-front", Branch: "main", Version: Version{1, 29, 22, ""}, Raw: "front: [main-1.29.22]"},
+		},
+		{
+			name:    "ссылка на не-версию — ошибка",
+			in:      " # backend: [PLAT-5352|https://jira.example/browse/PLAT-5352]",
+			wantErr: true,
+		},
+		{
 			// Зачёркнутый сервис исключён из релиза.
 			name:     "зачёркнутая строка пропускается",
 			in:       " # -enbek-integration: main-1.29.0-",

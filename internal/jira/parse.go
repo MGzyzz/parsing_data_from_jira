@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"env-release-tracker/internal/tag"
 )
@@ -153,9 +154,12 @@ func parseDescription(task *ReleaseTask, description string) {
 	}
 }
 
-// splitEnvironments разбирает список сред: "prod-holding, prod-idfrk"
-// или нумерованный "1. mod-prod".
+// splitEnvironments разбирает список сред: "prod-holding, prod-idfrk",
+// нумерованный "1. mod-prod" или строку вики-таблицы "|2|kpo-prod|20:00|".
 func splitEnvironments(s string) []string {
+	if strings.HasPrefix(s, "|") {
+		return tableEnvironment(s)
+	}
 	var envs []string
 	for _, part := range strings.Split(s, ",") {
 		part = strings.TrimSpace(listPrefix.ReplaceAllString(strings.TrimSpace(part), ""))
@@ -164,6 +168,23 @@ func splitEnvironments(s string) []string {
 		}
 	}
 	return envs
+}
+
+// tableEnvironment берёт среду из строки таблицы: первую ячейку, похожую на имя.
+// Номер строки и время имени не дают: в номере нет букв, во времени двоеточие.
+// Зачёркнутая ячейка {-}baiterek-prod{-}(Не накатывать) под имя не подходит —
+// на такую среду HF не катился. Заголовок ||№||Environment|| сред не содержит.
+func tableEnvironment(row string) []string {
+	if strings.HasPrefix(row, "||") {
+		return nil
+	}
+	for _, cell := range strings.Split(row, "|") {
+		cell = strings.TrimSpace(cell)
+		if environmentName.MatchString(cell) && strings.ContainsFunc(cell, unicode.IsLetter) {
+			return []string{cell}
+		}
+	}
+	return nil
 }
 
 var listPrefix = regexp.MustCompile(`^(?:#+|[-•]|\d+\.)\s*`)
