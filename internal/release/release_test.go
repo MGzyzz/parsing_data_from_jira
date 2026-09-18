@@ -387,3 +387,23 @@ func contains(items []string, want string) bool {
 	}
 	return false
 }
+
+func TestComputeDoesNotRepeatUnversionedCoreImageInDetails(t *testing.T) {
+	// redo-front одновременно и неразобранный образ, и кор-сервис без версии.
+	// Пометка о кор-сервисе информативнее, второй строки про тот же образ быть
+	// не должно: в деталях kpo-prod таких дублей набирается заметно.
+	st := images(t, "kpo-prod",
+		"redo-nuxeo:main-1.29.4",
+		"redo-backend:main-1.29.17",
+		"redo-front:kpo-prod-164897",
+	)
+
+	got := Compute(st, nil, cfg())
+
+	if !contains(got.Details, "кор-сервис без версионного тега: redo-front:kpo-prod-164897") {
+		t.Fatalf("Details = %v: нет пометки о кор-сервисе", got.Details)
+	}
+	if contains(got.Details, "образ вне схемы версий: redo-front:kpo-prod-164897") {
+		t.Errorf("Details = %v: тот же образ указан дважды", got.Details)
+	}
+}

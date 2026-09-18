@@ -10,6 +10,7 @@ import (
 
 	"env-release-tracker/internal/config"
 	"env-release-tracker/internal/jira"
+	"env-release-tracker/internal/logtest"
 	"env-release-tracker/internal/registry"
 	"env-release-tracker/internal/release"
 	"os"
@@ -469,4 +470,47 @@ func overridesWith(t *testing.T, envKind map[string]string) config.Overrides {
 		t.Fatalf("LoadOverrides: %v", err)
 	}
 	return ov
+}
+
+func TestRunMismatchWarningDoesNotRepeatDetails(t *testing.T) {
+	// Детали уже выведены в INFO «релиз определён». Повторять их в WARN —
+	// два экрана одного и того же: у kpo-prod в списке два десятка пунктов.
+	st := coreState("prod-a", 29, 0)
+	st.Unparsed = []string{"redo-front:prod-a-164897"}
+	versioned := st.Tags[:0]
+	for _, tg := range st.Tags {
+		if tg.Service != "redo-front" {
+			versioned = append(versioned, tg)
+		}
+	}
+	st.Tags = versioned
+
+	reg := &fakeRegistry{rows: []registry.Row{{Number: 2, Name: "prod-a", Status: "active"}}}
+	coll := &fakeCollector{byEnv: map[string]release.EnvState{"prod-a": st}}
+
+	log, logs := logtest.New()
+	a := New(reg, coll, fakeJira{}, config.Overrides{}, Config{Concurrency: 1, PipelineTimeout: time.Second, Release: releaseCfg, Write: true}, log)
+
+	if err := a.Run(t.Context()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	info, ok := logs.Find("релиз определён")
+	if !ok {
+		t.Fatal("нет записи о вычисленном релизе")
+	}
+	if info["details"] == "" {
+		t.Fatal("details должны остаться в INFO")
+	}
+
+	warn, ok := logs.Find("расхождение версий")
+	if !ok {
+		t.Fatal("нет предупреждения о расхождении")
+	}
+	if _, repeated := warn["details"]; repeated {
+		t.Errorf("WARN повторяет details: %v", warn)
+	}
+	if warn["core_unversioned"] != "true" {
+		t.Errorf("WARN не называет причину расхождения: %v", warn)
+	}
 }

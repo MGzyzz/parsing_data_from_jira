@@ -145,8 +145,13 @@ func (a *App) Run(ctx context.Context) error {
 			a.log.Info("релиз определён", "env", o.row.Name, "release", o.result.Cell(),
 				"minor_mismatch", o.result.MinorMismatch, "jira_mismatch", o.result.JiraMismatch,
 				"core_unversioned", o.result.CoreUnversioned, "details", o.result.Details)
+			// Details уже выведены строкой выше: WARN поднимает уровень
+			// и называет причину, а не повторяет весь список.
 			if o.result.MinorMismatch || o.result.JiraMismatch || o.result.CoreUnversioned {
-				a.log.Warn("расхождение версий", "env", o.row.Name, "details", o.result.Details)
+				a.log.Warn("расхождение версий", "env", o.row.Name,
+					"minor_mismatch", o.result.MinorMismatch,
+					"jira_mismatch", o.result.JiraMismatch,
+					"core_unversioned", o.result.CoreUnversioned)
 			}
 			updates = append(updates, registry.Update{Row: o.row, Value: o.result.Cell()})
 		}

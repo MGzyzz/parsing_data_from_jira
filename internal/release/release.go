@@ -68,24 +68,38 @@ func (r Result) Cell() string {
 func Compute(state EnvState, base *Baseline, cfg Config) Result {
 	res := Result{Environment: state.Environment, CollectedAt: state.CollectedAt}
 
-	for _, image := range state.Unparsed {
-		res.Details = append(res.Details, "образ вне схемы версий: "+image)
-	}
-
 	eligible := make([]tag.Tag, 0, len(state.Tags))
+	var ineligible []tag.Tag
 	for _, t := range state.Tags {
 		if t.Eligible() {
 			eligible = append(eligible, t)
 		} else {
-			res.Details = append(res.Details, "образ вне схемы релиза: "+t.Raw)
+			ineligible = append(ineligible, t)
 		}
 	}
 	latest := latestByService(eligible)
 	core := coreSet(cfg.CoreServices)
 
+	// Пометка о кор-сервисе содержательнее, чем «образ вне схемы»: она говорит,
+	// что из расчёта релиза выпал значимый сервис. Тот же образ вторым пунктом
+	// не повторяется.
 	unversioned := unversionedCore(state, latest, core)
 	res.CoreUnversioned = len(unversioned) > 0
-	res.Details = append(res.Details, unversioned...)
+	flagged := make(map[string]bool, len(unversioned))
+	for _, image := range unversioned {
+		flagged[image] = true
+		res.Details = append(res.Details, "кор-сервис без версионного тега: "+image)
+	}
+	for _, image := range state.Unparsed {
+		if !flagged[image] {
+			res.Details = append(res.Details, "образ вне схемы версий: "+image)
+		}
+	}
+	for _, t := range ineligible {
+		if !flagged[t.Raw] {
+			res.Details = append(res.Details, "образ вне схемы релиза: "+t.Raw)
+		}
+	}
 
 	minor, mismatch, details, ok := coreMinor(latest, core)
 	res.Details = append(res.Details, details...)
@@ -178,11 +192,12 @@ func latestByService(tags []tag.Tag) map[string]tag.Tag {
 // unversionedCore перечисляет образы кор-сервисов, у которых нет ни одного
 // тега по схеме релиза. Во время накатки со сборки среды на версию
 // версионный тег уже есть, и сервис в расчёте участвует — это не пометка.
+// Возвращаются сами образы: вызывающий код по ним же отсеивает дубли в деталях.
 func unversionedCore(state EnvState, latest map[string]tag.Tag, core map[string]bool) []string {
 	var details []string
 	check := func(service, image string) {
 		if _, versioned := latest[service]; core[service] && !versioned {
-			details = append(details, "кор-сервис без версионного тега: "+image)
+			details = append(details, image)
 		}
 	}
 	for _, image := range state.Unparsed {
