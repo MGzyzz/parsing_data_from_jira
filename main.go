@@ -48,6 +48,9 @@ func main() {
 	if *overridesPath != "" {
 		cfg.OverridesFile = *overridesPath
 	}
+	// slog.Default пишет через пакет log; уровень задаётся этим вызовом,
+	// формат строк при этом не меняется.
+	slog.SetLogLoggerLevel(cfg.LogLevel)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -250,5 +251,43 @@ func TestOverridesIntervalEnvironments(t *testing.T) {
 	}
 	if got := (Overrides{}).IntervalEnvironments(); len(got) != 0 {
 		t.Errorf("пустые overrides: %v", got)
+	}
+}
+
+func TestLoadLogLevel(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    slog.Level
+		wantErr bool
+	}{
+		{name: "по умолчанию info", want: slog.LevelInfo},
+		{name: "debug открывает перечень неразобранных строк", value: "debug", want: slog.LevelDebug},
+		{name: "регистр не важен", value: "WARN", want: slog.LevelWarn},
+		{name: "неизвестный уровень — ошибка", value: "verbose", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := full()
+			if tt.value != "" {
+				env["LOG_LEVEL"] = tt.value
+			}
+
+			cfg, err := Load(lookup(env))
+
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "LOG_LEVEL") {
+					t.Fatalf("ошибка = %v, хочу упоминание LOG_LEVEL", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.LogLevel != tt.want {
+				t.Errorf("LogLevel = %v, хочу %v", cfg.LogLevel, tt.want)
+			}
+		})
 	}
 }

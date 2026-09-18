@@ -3,6 +3,7 @@ package jira
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -165,18 +166,23 @@ func TestFetchLogsTextOfSkippedLine(t *testing.T) {
 		t.Fatalf("Fetch: %v", err)
 	}
 
-	attrs, ok := logs.Find("строка Jira пропущена")
+	entry, ok := logs.Find("строка Jira пропущена")
 	if !ok {
 		t.Fatal("нет записи о пропущенной строке")
 	}
-	if !strings.Contains(attrs["line"], "???") {
-		t.Errorf("в логе нет текста строки, атрибуты: %v", attrs)
+	if !strings.Contains(entry.Attrs["line"], "???") {
+		t.Errorf("в логе нет текста строки, атрибуты: %v", entry.Attrs)
+	}
+	// Список одинаков от прогона к прогону: это состояние данных в Jira,
+	// а не событие текущего цикла. На каждый час в WARN ему не место.
+	if entry.Level != slog.LevelDebug {
+		t.Errorf("уровень = %v, хочу DEBUG", entry.Level)
 	}
 }
 
 func TestFetchSummarizesSkippedIssues(t *testing.T) {
 	srv := searchServer(t, [][]issueStub{{
-		{key: "DOPS-1", summary: "Release 68", description: "*Projects:*\n # nuxeo: main-1.29.0", created: "2026-07-20T10:00:00.000+0500"},
+		{key: "DOPS-1", summary: "Release 68", description: "*Projects:*\n # nuxeo: main-1.29.0\n # backend: ???", created: "2026-07-20T10:00:00.000+0500"},
 		{key: "DOPS-2", summary: "Release PLAT-7484 для сред", created: "2026-07-20T10:00:00.000+0500"},
 		{key: "DOPS-3", summary: "Release 69", description: "*Projects:*\n # nuxeo: main-1.30.0", created: "2026-07-20T10:00:00.000+0500", status: "indeterminate"},
 	}}, 3)
@@ -195,11 +201,15 @@ func TestFetchSummarizesSkippedIssues(t *testing.T) {
 		t.Errorf("построчных записей о пропуске = %d, хочу 0", n)
 	}
 
-	attrs, ok := logs.Find("разбор Jira завершён")
+	entry, ok := logs.Find("разбор Jira завершён")
 	if !ok {
 		t.Fatal("нет сводки разбора")
 	}
-	if attrs["recognized"] != "1" || attrs["skipped_not_release"] != "1" || attrs["skipped_not_done"] != "1" {
-		t.Errorf("сводка = %v", attrs)
+	if entry.Attrs["recognized"] != "1" || entry.Attrs["skipped_not_release"] != "1" || entry.Attrs["skipped_not_done"] != "1" {
+		t.Errorf("сводка = %v", entry.Attrs)
+	}
+	// Рост числа неразобранных строк должен быть виден без включения DEBUG.
+	if entry.Attrs["skipped_lines"] != "1" {
+		t.Errorf("в сводке нет счётчика неразобранных строк: %v", entry.Attrs)
 	}
 }

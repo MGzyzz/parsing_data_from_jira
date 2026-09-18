@@ -55,7 +55,9 @@ func (c *Client) Fetch(ctx context.Context) ([]ReleaseTask, error) {
 	var tasks []ReleaseTask
 	// Под JQL попадают сотни нерелизных и незавершённых задач. Это обычный
 	// состав выборки, а не событие: в лог уходит их количество, не перечень.
-	var notDone, notRelease int
+	// Неразобранные строки — тоже состояние данных, одно и то же от прогона
+	// к прогону, поэтому их перечень уходит в DEBUG, а в сводке остаётся счёт.
+	var notDone, notRelease, skippedLines int
 
 	startAt := 0
 	for {
@@ -80,8 +82,9 @@ func (c *Client) Fetch(ctx context.Context) ([]ReleaseTask, error) {
 				continue
 			}
 			// Текст строки — единственное, по чему можно исправить данные в Jira.
+			skippedLines += len(task.Skipped)
 			for _, line := range task.Skipped {
-				c.cfg.Logger.Warn("строка Jira пропущена", "key", iss.Key, "line", line)
+				c.cfg.Logger.Debug("строка Jira пропущена", "key", iss.Key, "line", line)
 			}
 			tasks = append(tasks, task)
 		}
@@ -89,7 +92,8 @@ func (c *Client) Fetch(ctx context.Context) ([]ReleaseTask, error) {
 		startAt += len(page.Issues)
 		if len(page.Issues) == 0 || startAt >= page.Total {
 			c.cfg.Logger.Info("разбор Jira завершён", "recognized", len(tasks),
-				"skipped_not_release", notRelease, "skipped_not_done", notDone)
+				"skipped_not_release", notRelease, "skipped_not_done", notDone,
+				"skipped_lines", skippedLines)
 			return tasks, nil
 		}
 	}

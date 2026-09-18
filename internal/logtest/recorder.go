@@ -33,9 +33,15 @@ func (r *Recorder) Handle(_ context.Context, rec slog.Record) error {
 func (r *Recorder) WithAttrs([]slog.Attr) slog.Handler { return r }
 func (r *Recorder) WithGroup(string) slog.Handler      { return r }
 
-// Find возвращает атрибуты первой записи с указанным сообщением.
-// Значения приводятся к строке: тестам достаточно сравнения с образцом.
-func (r *Recorder) Find(message string) (map[string]string, bool) {
+// Entry — то, что проверяют тесты: уровень и атрибуты записи.
+// Значения атрибутов приводятся к строке, сравнения с образцом этого хватает.
+type Entry struct {
+	Level slog.Level
+	Attrs map[string]string
+}
+
+// Find возвращает первую запись с указанным сообщением.
+func (r *Recorder) Find(message string) (Entry, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, rec := range r.records {
@@ -47,9 +53,9 @@ func (r *Recorder) Find(message string) (map[string]string, bool) {
 			attrs[a.Key] = a.Value.String()
 			return true
 		})
-		return attrs, true
+		return Entry{Level: rec.Level, Attrs: attrs}, true
 	}
-	return nil, false
+	return Entry{}, false
 }
 
 // Count считает записи с указанным сообщением.

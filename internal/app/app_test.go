@@ -499,7 +499,7 @@ func TestRunMismatchWarningDoesNotRepeatDetails(t *testing.T) {
 	if !ok {
 		t.Fatal("нет записи о вычисленном релизе")
 	}
-	if info["details"] == "" {
+	if info.Attrs["details"] == "" {
 		t.Fatal("details должны остаться в INFO")
 	}
 
@@ -507,10 +507,10 @@ func TestRunMismatchWarningDoesNotRepeatDetails(t *testing.T) {
 	if !ok {
 		t.Fatal("нет предупреждения о расхождении")
 	}
-	if _, repeated := warn["details"]; repeated {
-		t.Errorf("WARN повторяет details: %v", warn)
+	if _, repeated := warn.Attrs["details"]; repeated {
+		t.Errorf("WARN повторяет details: %v", warn.Attrs)
 	}
-	if warn["core_unversioned"] != "true" {
-		t.Errorf("WARN не называет причину расхождения: %v", warn)
+	if warn.Attrs["core_unversioned"] != "true" {
+		t.Errorf("WARN не называет причину расхождения: %v", warn.Attrs)
 	}
 }

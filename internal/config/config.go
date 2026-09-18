@@ -8,6 +8,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -24,6 +25,9 @@ type Config struct {
 	Concurrency     int
 	PipelineTimeout time.Duration
 	OverridesFile   string
+	// LogLevel отпирает DEBUG: под ним печатается перечень неразобранных
+	// строк Jira, который в обычном прогоне только зашумлял бы вывод.
+	LogLevel slog.Level
 }
 
 // GitLab — доступ к пайплайну collect-images.
@@ -99,6 +103,7 @@ func Load(env Lookup) (Config, error) {
 		Concurrency:     l.intVal("CONCURRENCY", 5),
 		PipelineTimeout: l.duration("PIPELINE_TIMEOUT", 10*time.Minute),
 		OverridesFile:   l.str("OVERRIDES_FILE", "overrides.yaml"),
+		LogLevel:        l.logLevel("LOG_LEVEL", slog.LevelInfo),
 	}
 
 	if cfg.Sheet.Range != "A:I" {
@@ -175,6 +180,20 @@ func (l *loader) duration(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+// logLevel разбирает уровень логирования: debug, info, warn или error.
+func (l *loader) logLevel(key string, def slog.Level) slog.Level {
+	raw, ok := l.env(key)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return def
+	}
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(strings.TrimSpace(raw))); err != nil {
+		l.errs = append(l.errs, fmt.Errorf("%s: неизвестный уровень %q, нужен debug, info, warn или error", key, raw))
+		return def
+	}
+	return level
 }
 
 func (l *loader) list(key, def string) []string {
