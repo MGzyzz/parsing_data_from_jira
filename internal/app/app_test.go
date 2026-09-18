@@ -182,16 +182,60 @@ func TestRunOneEnvironmentFailureDoesNotStopOthers(t *testing.T) {
 }
 
 func TestRunCollectErrorDoesNotWriteThatRow(t *testing.T) {
-	reg := &fakeRegistry{rows: []registry.Row{{Number: 2, Name: "broken", Status: "active"}}}
-	coll := &fakeCollector{errs: map[string]error{"broken": errors.New("нет доступа")}}
+	reg := &fakeRegistry{rows: []registry.Row{
+		{Number: 2, Name: "broken", Status: "active"},
+		{Number: 3, Name: "ok", Status: "active"},
+	}}
+	coll := &fakeCollector{
+		byEnv: map[string]release.EnvState{"ok": coreState("ok", 29, 0)},
+		errs:  map[string]error{"broken": errors.New("нет доступа")},
+	}
 
 	a := New(reg, coll, fakeJira{}, config.Overrides{}, Config{Concurrency: 1, PipelineTimeout: time.Second, Release: releaseCfg, Write: true}, nil)
 
 	if err := a.Run(t.Context()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(reg.updates) != 0 {
-		t.Fatalf("updates = %+v, хочу пусто — при ошибке сбора запись не идёт", reg.updates)
+	for _, u := range reg.updates {
+		if u.Row.Name == "broken" {
+			t.Fatalf("updates = %+v: при ошибке сбора строка broken не пишется", reg.updates)
+		}
+	}
+}
+
+func TestRunFailsWhenEveryCollectionFailed(t *testing.T) {
+	// Протухший токен GitLab роняет сбор на всех средах. Прогон без единого
+	// результата обязан завершиться ошибкой, иначе cron сочтёт его успешным.
+	reg := &fakeRegistry{rows: []registry.Row{
+		{Number: 2, Name: "prod-a", Status: "active"},
+		{Number: 3, Name: "prod-b", Status: "active"},
+	}}
+	unauthorized := errors.New("GitLab ответил HTTP 401")
+	coll := &fakeCollector{errs: map[string]error{"prod-a": unauthorized, "prod-b": unauthorized}}
+
+	a := New(reg, coll, fakeJira{}, config.Overrides{}, Config{Concurrency: 2, PipelineTimeout: time.Second, Release: releaseCfg, Write: true}, nil)
+
+	err := a.Run(t.Context())
+	if !errors.Is(err, unauthorized) {
+		t.Fatalf("Run = %v, хочу ошибку с причиной сбоя сбора", err)
+	}
+	if reg.calls != 0 {
+		t.Fatalf("Update вызван %d раз, хочу 0: записывать нечего", reg.calls)
+	}
+}
+
+func TestRunIntervalSkipsDoNotCountAsFailures(t *testing.T) {
+	// Все среды пропущены по интервалу: сбоя не было, прогон успешен.
+	reg := &fakeRegistry{rows: []registry.Row{{Number: 2, Name: "nit-adilet", Status: "configuring"}}}
+	ov := overridesWith(t, map[string]string{"nit-adilet": "interval"})
+	store := newMemStore()
+	store.Set("nit-adilet", time.Now())
+
+	a := New(reg, &fakeCollector{}, fakeJira{}, ov, Config{Concurrency: 1, PipelineTimeout: time.Second, Release: releaseCfg, Write: true}, nil)
+	a.store = store
+
+	if err := a.Run(t.Context()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 }
 

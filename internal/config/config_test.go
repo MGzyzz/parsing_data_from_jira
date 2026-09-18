@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -230,5 +231,24 @@ func TestCollectorRejectsInvalidSettings(t *testing.T) {
 		if _, err := Load(lookup(env)); err == nil {
 			t.Errorf("accepted %s=%s", key, value)
 		}
+	}
+}
+
+func TestOverridesIntervalEnvironments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "overrides.yaml")
+	body := "envs:\n  nit-b:\n    interval: 24h\n  dev:\n    skip: офис\n  nit-a:\n    interval: 6h\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ov, err := LoadOverrides(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := ov.IntervalEnvironments(); !slices.Equal(got, []string{"nit-a", "nit-b"}) {
+		t.Errorf("IntervalEnvironments() = %v, хочу [nit-a nit-b] по алфавиту", got)
+	}
+	if got := (Overrides{}).IntervalEnvironments(); len(got) != 0 {
+		t.Errorf("пустые overrides: %v", got)
 	}
 }

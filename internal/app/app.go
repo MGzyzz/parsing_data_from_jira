@@ -123,12 +123,21 @@ func (a *App) Run(ctx context.Context) error {
 	outcomes := a.collectAll(ctx, rows, tasks)
 
 	updates := make([]registry.Update, 0, len(outcomes))
+	var attempted, failed int
+	var firstErr error
 	for _, o := range outcomes {
+		if o.skip == "" {
+			attempted++
+		}
 		switch {
 		case o.skip != "":
 			a.log.Info("среда пропущена", "env", o.row.Name, "reason", o.skip)
 		case o.err != nil:
 			a.log.Warn("сбор не удался", "env", o.row.Name, "err", o.err)
+			failed++
+			if firstErr == nil {
+				firstErr = o.err
+			}
 		case !o.result.Defined():
 			// Если релиз не определён, значение в реестре сохраняется.
 			a.log.Info("релиз не определён", "env", o.row.Name, "details", o.result.Details)
@@ -141,6 +150,12 @@ func (a *App) Run(ctx context.Context) error {
 			}
 			updates = append(updates, registry.Update{Row: o.row, Value: o.result.Cell()})
 		}
+	}
+
+	// Сбой всех опрошенных сред — общая причина (токен, раннер, сеть), а не
+	// проблема отдельной среды. Без ошибки cron счёл бы такой прогон успешным.
+	if attempted > 0 && failed == attempted {
+		return fmt.Errorf("сбор не удался ни на одной из %d сред, первая ошибка: %w", attempted, firstErr)
 	}
 
 	if !a.cfg.Write {
