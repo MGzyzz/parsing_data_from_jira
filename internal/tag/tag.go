@@ -99,8 +99,10 @@ func (v Version) Compare(o Version) int {
 }
 
 // listMarker убирает маркер списка в начале строки: вики-разметка Jira даёт
-// " # ", а в присланных вручную выгрузках встречается "3. ".
-var listMarker = regexp.MustCompile(`^(?:#+|\d+\.)\s*`)
+// " # ", в присланных вручную выгрузках встречается "3. " и "- ".
+// Пробел после дефиса обязателен: без него дефис начинает зачёркивание
+// (-enbek-integration: main-1.29.0-), а не список.
+var listMarker = regexp.MustCompile(`^(?:#+|\d+\.|-\s)\s*`)
 
 // nonRedoServices перечисляет сервисы, имена которых не требуют префикса redo-.
 var nonRedoServices = map[string]bool{
@@ -109,6 +111,8 @@ var nonRedoServices = map[string]bool{
 
 // NormalizeService добавляет префикс redo-, кроме сервисов из nonRedoServices.
 func NormalizeService(name string) string {
+	// В задачах встречается redo_front через подчёркивание.
+	name = strings.ReplaceAll(name, "_", "-")
 	if strings.HasPrefix(name, "redo-") || nonRedoServices[name] {
 		return name
 	}
@@ -124,8 +128,10 @@ func ParseProjectLine(line string) (Tag, bool, error) {
 		return Tag{}, false, nil
 	}
 
-	// Зачёркнутый сервис исключён из релиза: -enbek-integration: main-1.29.0-
-	if strings.HasPrefix(raw, "-") && strings.HasSuffix(raw, "-") {
+	// Зачёркнутый сервис исключён из релиза: -enbek-integration: main-1.29.0-.
+	// Закрывающий дефис ищем не в конце строки: за ним нередко идёт пояснение
+	// вроде «накатывать не нужно».
+	if strings.HasPrefix(raw, "-") {
 		return Tag{}, false, nil
 	}
 
@@ -137,12 +143,25 @@ func ParseProjectLine(line string) (Tag, bool, error) {
 
 	// Хвост-комментарий после тега отбрасываем, берём первый токен.
 	fields := strings.Fields(rest)
+
+	// Зачёркнутый тег исключён. Если рядом поставили новый — берём его:
+	// redo_front: -release-1.28.1- [release-1.28.2|https://...]
+	var struck bool
+	for len(fields) > 0 && struckThrough(fields[0]) {
+		struck = true
+		fields = fields[1:]
+	}
 	if len(fields) == 0 {
 		return Tag{}, false, nil // сервис упомянут, но тег не проставлен
 	}
 
 	v, branch, err := parseVersion(versionToken(fields[0]))
 	if err != nil {
+		// Тег зачеркнули, а замены не оказалось: сервис исключён из релиза,
+		// это решение автора задачи, а не испорченные данные.
+		if struck {
+			return Tag{}, false, nil
+		}
 		return Tag{}, false, fmt.Errorf("%q: %w", raw, err)
 	}
 
@@ -152,6 +171,11 @@ func ParseProjectLine(line string) (Tag, bool, error) {
 		Version: v,
 		Raw:     raw,
 	}, true, nil
+}
+
+// struckThrough распознаёт зачёркнутый токен Jira: -main-1.1.0-.
+func struckThrough(token string) bool {
+	return len(token) > 2 && strings.HasPrefix(token, "-") && strings.HasSuffix(token, "-")
 }
 
 // colorMarkup — цветовая разметка Jira {color:#172b4d}...{color}. Появляется,

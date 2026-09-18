@@ -221,6 +221,32 @@ func TestParseProjectLine(t *testing.T) {
 			wantSkip: true,
 		},
 		{
+			// Зачёркивание закрывается в середине строки, дальше идёт
+			// пояснение. Сервис всё равно исключён — это не ошибка разбора.
+			name:     "зачёркнутый сервис с пояснением после закрывающего дефиса",
+			in:       " # -integration-opentext: release-1.10.0- накатывать не нужно",
+			wantSkip: true,
+		},
+		{
+			// Зачёркнут сам тег, а не сервис, и замены рядом нет.
+			name:     "зачёркнутый тег без замены пропускается",
+			in:       " # superset-custom: -main-1.1.0- +нет теговой системы+",
+			wantSkip: true,
+		},
+		{
+			// Старый тег зачеркнули и рядом поставили новый ссылкой.
+			name: "зачёркнутый тег с заменой рядом",
+			in:   "4. redo_front: -release-1.28.1- [release-1.28.2|https://gitlab.example.org/redo/redo-front/-/tags/release-1.28.2]",
+			want: Tag{Service: "redo-front", Branch: "release", Version: Version{1, 28, 2, ""},
+				Raw: "redo_front: -release-1.28.1- [release-1.28.2|https://gitlab.example.org/redo/redo-front/-/tags/release-1.28.2]"},
+		},
+		{
+			// Дефис списка отделён пробелом, зачёркивание — нет.
+			name: "дефис маркера списка не зачёркивание",
+			in:   "- backend: main-1.29.0",
+			want: Tag{Service: "redo-backend", Branch: "main", Version: Version{1, 29, 0, ""}, Raw: "backend: main-1.29.0"},
+		},
+		{
 			name:     "пустая строка пропускается",
 			in:       "   ",
 			wantSkip: true,
