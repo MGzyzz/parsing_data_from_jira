@@ -32,3 +32,10 @@ GEMINI.md
 .cursor/
 .cursorrules
 .github/copilot-instructions.md
+
+# Не заказывали в ТЗ — держим локально до решения техлида (вопрос №11:
+# где крутится сервис и по каким шаблонам CI). Файлы остаются на диске.
+/Dockerfile
+/.dockerignore
+/.gitlab-ci.yml
+/.pre-commit-config.yaml

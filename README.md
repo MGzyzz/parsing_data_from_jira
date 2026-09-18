@@ -117,13 +117,6 @@ go test -race ./...
 export JIRA_JQL='summary ~ "Release" AND project = DevOps'
 ```
 
-Для Docker в файле, передаваемом через `--env-file`, используйте буквальное значение
-без обратных слешей перед кавычками:
-
-```dotenv
-JIRA_JQL=summary ~ "Release" AND project = DevOps
-```
-
 Файл [overrides.example.yaml](overrides.example.yaml) содержит примеры исключений
 для сред. При необходимости создайте на его основе `overrides.yaml` и настройте
 пропуски, имена сред и интервалы. Отсутствие файла допустимо.
@@ -153,7 +146,7 @@ JIRA_JQL=summary ~ "Release" AND project = DevOps
   основной сервис не записывает.
 
 Для service account браузерный вход и `secrets/token.json` не нужны.
-Стандартные пути секретов исключены из Git и контекста сборки Docker.
+Стандартные пути секретов исключены из Git.
 Не размещайте credentials в произвольных файлах или комментариях.
 
 ### Jira
@@ -191,34 +184,6 @@ go run . -env=prod-qazsu -write
 Без `-daemon` программа выполняет один цикл и завершается. Для периодического
 запуска можно использовать внешний планировщик, например Kubernetes CronJob.
 При отдельных запусках настройка `interval` не сохраняется между процессами.
-
-## Docker
-
-Сборка образа:
-
-```bash
-docker build -t env-release-tracker .
-```
-
-Пример запуска без записи с ключом service account, сохранённым в
-`secrets/service-account.json`. Остальные обязательные настройки должны быть в `.env`:
-
-```bash
-docker run --rm --env-file .env \
-  --mount "type=bind,source=$(pwd)/secrets,target=/run/secrets,readonly" \
-  -e GOOGLE_CREDENTIALS_JSON=/run/secrets/service-account.json \
-  env-release-tracker -env=prod-qazsu
-```
-
-Файл ключа должен быть доступен на чтение пользователю контейнера.
-Для OAuth вместо этого требуется смонтировать `secrets/` в `/app/secrets`
-и указать путь к OAuth credentials внутри контейнера.
-Пользовательский `overrides.yaml` также передаётся отдельным bind mount;
-в образ включён только `overrides.example.yaml`.
-
-Финальный образ использует `gcr.io/distroless/static-debian12:nonroot`.
-Процесс работает от непривилегированного пользователя. `.env` и `secrets/`
-в образ не включаются.
 
 ## Структура проекта
 
@@ -282,17 +247,20 @@ Vault-клиент в приложение не встроен; пути и сп
 
 ## Проверка перед коммитом
 
-`.gitignore` и `.dockerignore` исключают `.env.*`, `env.sh`, `secrets/` и типовые
-JSON-файлы ключей/токенов; `.env.example` остаётся в Git. Это не заменяет проверку
-содержимого. CI запускает Gitleaks по истории Git и файлам, включая комментарии,
-с маскированием найденных значений. При находке job завершается ошибкой.
+`.gitignore` исключает `.env.*`, `env.sh`, `secrets/` и типовые JSON-файлы
+ключей/токенов; `.env.example` остаётся в Git. Это не заменяет проверку
+содержимого.
 
-Локально установите [Gitleaks](https://github.com/gitleaks/gitleaks) и выполните:
+Установите [Gitleaks](https://github.com/gitleaks/gitleaks) и выполните перед
+коммитом:
 
 ```bash
 gitleaks git --redact --log-opts="--all" .
+gitleaks dir --redact .
 ```
 
-Для проверки до коммита установите `pre-commit` и выполните `pre-commit install`:
-конфигурация `.pre-commit-config.yaml` включает Gitleaks. Проверка не требует
-токенов Jira, GitLab или Google. Не используйте реальные ключи в тестах.
+Проверка не требует токенов Jira, GitLab или Google. Не используйте реальные
+ключи в тестах.
+
+Проверка запускается вручную: конвейер CI в репозитории не заведён — способ
+запуска сервиса и шаблоны CI остаются открытым вопросом (пункт 11 ТЗ).
