@@ -1,9 +1,3 @@
-# env-release-tracker
-
-Сервис на Go для определения релизов сред по версиям контейнерных образов
-и обновления колонки `Release` в Google Sheets. Номер релиза рассчитывается
-по тегам основных сервисов; базовые версии из Jira используются для определения HF.
-
 ## Текущее состояние
 
 Сервис читает Google Sheets и Jira. Режим `IMAGE_COLLECTOR=stub` (по умолчанию)
@@ -201,66 +195,3 @@ cmd/googleauth/       первоначальный OAuth-вход пользов
 ```
 
 Оба сборщика реализуют интерфейс `app.Collector`; выбор задаётся `IMAGE_COLLECTOR`.
-
-## Проверка через тестовый GitLab
-
-Сначала создайте Personal Access Token со scope `api` и сохраните его
-локально как `GITLAB_TOKEN`. SSH-ключ для API не используется.
-После загрузки остальных настроек окружения задайте:
-
-```bash
-export IMAGE_COLLECTOR=gitlab
-export GITLAB_URL=https://gitlab.com
-export COLLECT_IMAGES_PROJECT_ID=86532070
-export COLLECT_IMAGES_REF=main
-export GITLAB_MOCK_SCENARIO=hotfix
-
-go run . -env=prod-holding
-```
-
-Это запускает пайплайн проекта `Gzyzz/kubernetstest` и выполняет расчёт без
-записи в Sheets. Dry-run отключает только запись в таблицу: при режиме `gitlab`
-пайплайн запускается даже без `-write`.
-
-`GITLAB_POLL_INTERVAL` задаёт интервал проверки (по умолчанию `3s`),
-`PIPELINE_TIMEOUT` — предельное время сбора (`10m`). При таймауте клиент
-прекращает ожидание; уже запущенный удалённый пайплайн автоматически не отменяется.
-В логе сохраняется его ID. При ошибке сбора значение в таблице не меняется.
-
-`GITLAB_MOCK_SCENARIO` передаётся в пайплайн как `MOCK_SCENARIO`.
-Сценарии: `release`, `release69`, `hotfix`, `mixed`, `empty`, `failed`, `trace`.
-Для рабочего collect-images оставьте эту настройку пустой.
-
-API: [запуск пайплайна](https://docs.gitlab.com/api/pipelines/),
-[джобы](https://docs.gitlab.com/api/jobs/),
-[артефакты](https://docs.gitlab.com/api/job_artifacts/).
-
-## Серверный запуск и секреты
-
-Сервис принимает настройки из окружения, а Google credentials — из файла.
-На сервере доставляйте секреты из Vault средствами вашей платформы: токены в
-`JIRA_TOKEN` / `GITLAB_TOKEN`, JSON service account в файл, доступный только процессу
-сервиса. В `GOOGLE_CREDENTIALS_JSON` укажите путь смонтированного файла.
-Vault-клиент в приложение не встроен; пути и способ авторизации Vault задаёт ваша
-инфраструктура. Не сохраняйте секреты в образе контейнера или YAML репозитория.
-После доставки настроек запуск: `env-release-tracker -daemon -write`.
-
-## Проверка перед коммитом
-
-`.gitignore` исключает `.env.*`, `env.sh`, `secrets/` и типовые JSON-файлы
-ключей/токенов; `.env.example` остаётся в Git. Это не заменяет проверку
-содержимого.
-
-Установите [Gitleaks](https://github.com/gitleaks/gitleaks) и выполните перед
-коммитом:
-
-```bash
-gitleaks git --redact --log-opts="--all" .
-gitleaks dir --redact .
-```
-
-Проверка не требует токенов Jira, GitLab или Google. Не используйте реальные
-ключи в тестах.
-
-Проверка запускается вручную: конвейер CI в репозитории не заведён — способ
-запуска сервиса и шаблоны CI остаются открытым вопросом (пункт 11 ТЗ).
