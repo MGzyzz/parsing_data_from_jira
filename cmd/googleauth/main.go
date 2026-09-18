@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -61,58 +60,88 @@ func main() {
 
 // login проходит OAuth loopback-flow (RFC 8252): поднимает локальный
 // сервер на свободном порту, открывает consent-экран в браузере и
-// получает код через редирект на localhost.
+// получает код через редирект на 127.0.0.1.
 func login(ctx context.Context, cfg *oauth2.Config) (*oauth2.Token, error) {
-	listener, err := net.Listen("tcp", "localhost:0")
+	// IP, а не localhost: Google предупреждает о проблемах localhost с файрволами,
+	// а localhost может разрешиться в ::1, когда сервер слушает только IPv4.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("не удалось открыть локальный порт: %w", err)
 	}
 	defer listener.Close()
 
 	port := listener.Addr().(*net.TCPAddr).Port
-	cfg.RedirectURL = fmt.Sprintf("http://localhost:%d", port)
+	cfg.RedirectURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 
-	state := randomState()
-	type result struct {
-		code string
-		err  error
-	}
-	resultCh := make(chan result, 1)
+	state := rand.Text()
+	// PKCE связывает код с этим запуском: перехваченный код без verifier
+	// на токен не обменять.
+	verifier := oauth2.GenerateVerifier()
+	results := make(chan callbackResult, 1)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		if q.Get("state") != state {
-			http.Error(w, "неверный state", http.StatusBadRequest)
-			resultCh <- result{err: fmt.Errorf("неверный state в ответе — запрос не от этого запуска")}
-			return
-		}
-		if msg := q.Get("error"); msg != "" {
-			http.Error(w, "доступ не предоставлен", http.StatusBadRequest)
-			resultCh <- result{err: fmt.Errorf("Google вернул ошибку: %s", msg)}
-			return
-		}
-		fmt.Fprint(w, "Готово, можно закрыть вкладку и вернуться в терминал.")
-		resultCh <- result{code: q.Get("code")}
-	})
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{Handler: callbackHandler(state, results), ReadHeaderTimeout: 10 * time.Second}
 	go srv.Serve(listener)
-	defer srv.Shutdown(ctx)
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		srv.Shutdown(shutdownCtx)
+	}()
 
-	authURL := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "consent"))
+	authURL := cfg.AuthCodeURL(state,
+		oauth2.AccessTypeOffline,
+		oauth2.SetAuthURLParam("prompt", "consent"),
+		oauth2.S256ChallengeOption(verifier),
+	)
 	fmt.Println("Открой в браузере и войди под своим аккаунтом (должен открыться сам):")
 	fmt.Println(authURL)
 	openBrowser(authURL)
 
 	select {
-	case res := <-resultCh:
+	case res := <-results:
 		if res.err != nil {
 			return nil, res.err
 		}
-		return cfg.Exchange(ctx, res.code)
+		return cfg.Exchange(ctx, res.code, oauth2.VerifierOption(verifier))
 	case <-time.After(5 * time.Minute):
 		return nil, fmt.Errorf("не дождались входа за 5 минут")
 	}
+}
+
+// callbackResult — итог редиректа от Google: код авторизации или ошибка.
+type callbackResult struct {
+	code string
+	err  error
+}
+
+// callbackHandler принимает редирект Google на корень сервера.
+// Засчитывается только первый ответ: следом браузер запрашивает /favicon.ico,
+// могут прийти и повторы. Блокирующая отправка в канал, который уже никто
+// не читает, повесила бы обработчик, а с ним и остановку сервера.
+func callbackHandler(state string, results chan<- callbackResult) http.Handler {
+	deliver := func(res callbackResult) {
+		select {
+		case results <- res:
+		default:
+		}
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("state") != state {
+			http.Error(w, "неверный state", http.StatusBadRequest)
+			deliver(callbackResult{err: fmt.Errorf("неверный state в ответе — запрос не от этого запуска")})
+			return
+		}
+		if msg := q.Get("error"); msg != "" {
+			http.Error(w, "доступ не предоставлен", http.StatusBadRequest)
+			deliver(callbackResult{err: fmt.Errorf("Google вернул ошибку: %s", msg)})
+			return
+		}
+		fmt.Fprint(w, "Готово, можно закрыть вкладку и вернуться в терминал.")
+		deliver(callbackResult{code: q.Get("code")})
+	})
+	return mux
 }
 
 func openBrowser(url string) {
@@ -126,14 +155,6 @@ func openBrowser(url string) {
 		cmd = exec.Command("xdg-open", url)
 	}
 	_ = cmd.Start()
-}
-
-func randomState() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
-	}
-	return hex.EncodeToString(b)
 }
 
 func saveToken(path string, tok *oauth2.Token) error {
