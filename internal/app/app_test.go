@@ -514,3 +514,22 @@ func TestRunMismatchWarningDoesNotRepeatDetails(t *testing.T) {
 		t.Errorf("WARN не называет причину расхождения: %v", warn.Attrs)
 	}
 }
+
+func TestNewUsesStoreFromConfig(t *testing.T) {
+	// Хранилище приходит снаружи: файлов app не читает, а без внешнего
+	// хранилища interval не переживает завершение процесса.
+	reg := &fakeRegistry{rows: []registry.Row{{Number: 2, Name: "nit-adilet", Status: "configuring"}}}
+	ov := overridesWith(t, map[string]string{"nit-adilet": "interval"})
+	store := newMemStore()
+	store.Set("nit-adilet", time.Now())
+	coll := &fakeCollector{byEnv: map[string]release.EnvState{"nit-adilet": coreState("nit-adilet", 29, 0)}}
+
+	a := New(reg, coll, fakeJira{}, ov, Config{Concurrency: 1, PipelineTimeout: time.Second, Release: releaseCfg, Write: true, Store: store}, nil)
+
+	if err := a.Run(t.Context()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(coll.calls) != 0 {
+		t.Errorf("сборщик вызван %v: интервал из переданного хранилища не сработал", coll.calls)
+	}
+}

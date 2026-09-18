@@ -68,6 +68,9 @@ type Config struct {
 	Write bool
 	// Only — одна среда для отладки (-env). Пусто — все строки реестра.
 	Only string
+	// Store хранит время последнего опроса для overrides.interval.
+	// nil — в памяти процесса: интервал не переживёт его завершения.
+	Store Store
 }
 
 type App struct {
@@ -86,6 +89,10 @@ func New(reg Registry, collector Collector, jiraCli JiraFetcher, overrides confi
 	if log == nil {
 		log = slog.Default()
 	}
+	store := cfg.Store
+	if store == nil {
+		store = NewMemoryStore()
+	}
 	return &App{
 		registry:  reg,
 		collector: collector,
@@ -93,7 +100,7 @@ func New(reg Registry, collector Collector, jiraCli JiraFetcher, overrides confi
 		overrides: overrides,
 		cfg:       cfg,
 		log:       log,
-		store:     NewMemoryStore(),
+		store:     store,
 		now:       time.Now,
 	}
 }

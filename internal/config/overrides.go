@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"slices"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -38,20 +37,6 @@ type Overrides struct {
 // чтобы вызывающему не приходилось проверять наличие.
 func (o Overrides) For(environment string) EnvOverride {
 	return o.envs[environment]
-}
-
-// IntervalEnvironments перечисляет по алфавиту среды с правилом interval.
-// Время последнего опроса хранится в памяти процесса, поэтому interval действует
-// только в режиме -daemon; список нужен, чтобы предупредить об этом при запуске.
-func (o Overrides) IntervalEnvironments() []string {
-	var envs []string
-	for name, ov := range o.envs {
-		if ov.Interval > 0 {
-			envs = append(envs, name)
-		}
-	}
-	slices.Sort(envs)
-	return envs
 }
 
 // rawOverrides повторяет формат файла: интервал приходит строкой.

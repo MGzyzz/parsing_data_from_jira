@@ -25,6 +25,9 @@ type Config struct {
 	Concurrency     int
 	PipelineTimeout time.Duration
 	OverridesFile   string
+	// StateFile хранит время последнего опроса сред между запусками.
+	// Без него overrides.interval действует только внутри одного процесса.
+	StateFile string
 	// LogLevel отпирает DEBUG: под ним печатается перечень неразобранных
 	// строк Jira, который в обычном прогоне только зашумлял бы вывод.
 	LogLevel slog.Level
@@ -103,6 +106,7 @@ func Load(env Lookup) (Config, error) {
 		Concurrency:     l.intVal("CONCURRENCY", 5),
 		PipelineTimeout: l.duration("PIPELINE_TIMEOUT", 10*time.Minute),
 		OverridesFile:   l.str("OVERRIDES_FILE", "overrides.yaml"),
+		StateFile:       l.str("STATE_FILE", "state.json"),
 		LogLevel:        l.logLevel("LOG_LEVEL", slog.LevelInfo),
 	}
 

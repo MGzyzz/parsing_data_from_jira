@@ -12,6 +12,7 @@ secrets/
 # Локальные данные прогона
 cache/
 data/
+state.json
 *.log
 
 # Собранный бинарник

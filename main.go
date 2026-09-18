@@ -26,6 +26,7 @@ import (
 	"env-release-tracker/internal/jira"
 	"env-release-tracker/internal/registry"
 	"env-release-tracker/internal/release"
+	"env-release-tracker/internal/store"
 )
 
 // runInterval задаёт период запуска в режиме -daemon.
@@ -55,7 +56,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	a, err := build(ctx, cfg, *write, *only, *daemon, log)
+	a, err := build(ctx, cfg, *write, *only, log)
 	if err != nil {
 		log.Error("сборка зависимостей", "err", err)
 		os.Exit(1)
@@ -100,15 +101,16 @@ func runDaemon(ctx context.Context, a *app.App, log *slog.Logger) error {
 }
 
 // build создаёт клиентов источников данных и экземпляр App.
-func build(ctx context.Context, cfg config.Config, write bool, only string, daemon bool, log *slog.Logger) (*app.App, error) {
+func build(ctx context.Context, cfg config.Config, write bool, only string, log *slog.Logger) (*app.App, error) {
 	overrides, err := config.LoadOverrides(cfg.OverridesFile)
 	if err != nil {
 		return nil, fmt.Errorf("overrides: %w", err)
 	}
-	// Одиночный прогон начинает с пустой памятью, и interval ни разу не сработает:
-	// среды опрашиваются при каждом запуске. Молча обещать реже — хуже, чем сказать.
-	if envs := overrides.IntervalEnvironments(); !daemon && len(envs) > 0 {
-		log.Warn("interval из overrides действует только в режиме -daemon, среды опрашиваются при каждом запуске", "envs", envs)
+	// Время опроса переживает завершение процесса: прогон раз в час — это новый
+	// процесс, и без файла overrides.interval не сработал бы ни разу.
+	state, err := store.NewFile(cfg.StateFile, log)
+	if err != nil {
+		return nil, err
 	}
 
 	googleOpt, err := googleClientOption(ctx, cfg.Sheet.Credentials)
@@ -149,6 +151,7 @@ func build(ctx context.Context, cfg config.Config, write bool, only string, daem
 		},
 		Write: write,
 		Only:  only,
+		Store: state,
 	}, log), nil
 }
 
