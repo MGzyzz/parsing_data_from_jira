@@ -53,6 +53,9 @@ func (c *Client) Fetch(ctx context.Context) ([]ReleaseTask, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.cfg.FetchTimeout)
 	defer cancel()
 	var tasks []ReleaseTask
+	// Под JQL попадают сотни нерелизных и незавершённых задач. Это обычный
+	// состав выборки, а не событие: в лог уходит их количество, не перечень.
+	var notDone, notRelease int
 
 	startAt := 0
 	for {
@@ -63,7 +66,7 @@ func (c *Client) Fetch(ctx context.Context) ([]ReleaseTask, error) {
 
 		for _, iss := range page.Issues {
 			if iss.Fields.Status.Category.Key != "done" {
-				c.cfg.Logger.Info("задача Jira пропущена", "key", iss.Key, "reason", "статус не завершён или отсутствует")
+				notDone++
 				continue
 			}
 			created, err := time.Parse(jiraTimeLayout, iss.Fields.Created)
@@ -71,18 +74,22 @@ func (c *Client) Fetch(ctx context.Context) ([]ReleaseTask, error) {
 				c.cfg.Logger.Warn("задача Jira пропущена", "key", iss.Key, "reason", "некорректная дата created")
 				continue
 			}
-			if task, ok := ParseIssue(iss.Key, iss.Fields.Summary, iss.Fields.Description, created); ok {
-				for range task.Skipped {
-					c.cfg.Logger.Warn("строка Jira пропущена", "key", iss.Key, "reason", "неразобранный тег или список сред")
-				}
-				tasks = append(tasks, task)
-			} else {
-				c.cfg.Logger.Info("задача Jira пропущена", "key", iss.Key, "reason", "нет номера релиза/HF или состава Projects")
+			task, ok := ParseIssue(iss.Key, iss.Fields.Summary, iss.Fields.Description, created)
+			if !ok {
+				notRelease++
+				continue
 			}
+			// Текст строки — единственное, по чему можно исправить данные в Jira.
+			for _, line := range task.Skipped {
+				c.cfg.Logger.Warn("строка Jira пропущена", "key", iss.Key, "line", line)
+			}
+			tasks = append(tasks, task)
 		}
 
 		startAt += len(page.Issues)
 		if len(page.Issues) == 0 || startAt >= page.Total {
+			c.cfg.Logger.Info("разбор Jira завершён", "recognized", len(tasks),
+				"skipped_not_release", notRelease, "skipped_not_done", notDone)
 			return tasks, nil
 		}
 	}

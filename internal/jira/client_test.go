@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"env-release-tracker/internal/logtest"
 )
 
 // issueStub — минимальный набор полей ответа /rest/api/2/search.
@@ -15,6 +17,7 @@ type issueStub struct {
 	summary     string
 	description string
 	created     string
+	status      string
 }
 
 func searchServer(t *testing.T, pages [][]issueStub, total int) *httptest.Server {
@@ -48,13 +51,17 @@ func searchServer(t *testing.T, pages [][]issueStub, total int) *httptest.Server
 		}
 		issues := make([]map[string]any, 0, len(page))
 		for _, iss := range page {
+			status := iss.status
+			if status == "" {
+				status = "done"
+			}
 			issues = append(issues, map[string]any{
 				"key": iss.key,
 				"fields": map[string]any{
 					"summary":     iss.summary,
 					"description": iss.description,
 					"created":     iss.created,
-					"status":      map[string]any{"statusCategory": map[string]string{"key": "done"}},
+					"status":      map[string]any{"statusCategory": map[string]string{"key": status}},
 				},
 			})
 		}
@@ -140,5 +147,59 @@ func TestFetchParsesCreatedDate(t *testing.T) {
 	}
 	if tasks[0].Date.IsZero() {
 		t.Error("Date не разобрана из поля created")
+	}
+}
+
+func TestFetchLogsTextOfSkippedLine(t *testing.T) {
+	srv := searchServer(t, [][]issueStub{{
+		{key: "DOPS-1", summary: "Release 68",
+			description: "*Projects:*\n # nuxeo: main-1.29.0\n # backend: ???",
+			created:     "2026-07-20T10:00:00.000+0500"},
+	}}, 1)
+	defer srv.Close()
+
+	log, logs := logtest.New()
+	c := New(Config{URL: srv.URL, JQL: testJQL, Logger: log}, srv.Client())
+
+	if _, err := c.Fetch(t.Context()); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	attrs, ok := logs.Find("строка Jira пропущена")
+	if !ok {
+		t.Fatal("нет записи о пропущенной строке")
+	}
+	if !strings.Contains(attrs["line"], "???") {
+		t.Errorf("в логе нет текста строки, атрибуты: %v", attrs)
+	}
+}
+
+func TestFetchSummarizesSkippedIssues(t *testing.T) {
+	srv := searchServer(t, [][]issueStub{{
+		{key: "DOPS-1", summary: "Release 68", description: "*Projects:*\n # nuxeo: main-1.29.0", created: "2026-07-20T10:00:00.000+0500"},
+		{key: "DOPS-2", summary: "Release PLAT-7484 для сред", created: "2026-07-20T10:00:00.000+0500"},
+		{key: "DOPS-3", summary: "Release 69", description: "*Projects:*\n # nuxeo: main-1.30.0", created: "2026-07-20T10:00:00.000+0500", status: "indeterminate"},
+	}}, 3)
+	defer srv.Close()
+
+	log, logs := logtest.New()
+	c := New(Config{URL: srv.URL, JQL: testJQL, Logger: log}, srv.Client())
+
+	if _, err := c.Fetch(t.Context()); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	// Нерелизные задачи и незавершённые — обычный шум JQL, а не событие лога:
+	// под боевым JQL их сотни на каждый прогон.
+	if n := logs.Count("задача Jira пропущена"); n != 0 {
+		t.Errorf("построчных записей о пропуске = %d, хочу 0", n)
+	}
+
+	attrs, ok := logs.Find("разбор Jira завершён")
+	if !ok {
+		t.Fatal("нет сводки разбора")
+	}
+	if attrs["recognized"] != "1" || attrs["skipped_not_release"] != "1" || attrs["skipped_not_done"] != "1" {
+		t.Errorf("сводка = %v", attrs)
 	}
 }
