@@ -34,24 +34,23 @@ A — имя среды, F — статус, G — релиз. Другие ди
 1. В Google Cloud включите Google Sheets API, создайте service account и получите
    JSON-ключ. Сохраните его в `secrets/service-account.json`. Дайте этой учётке доступ
    к копии таблицы: чтение для dry-run, редактирование для записи.
-2. Создайте локальный файл `env.sh` по примеру ниже и заполните значения в редакторе.
+2. Скопируйте [.env.example](.env.example) в `.env` и заполните значения в редакторе.
    Этот файл исключён из Git. Токены не вставляйте в команды терминала или комментарии.
+   Для первой проверки достаточно `JIRA_URL`, `JIRA_TOKEN`, `SHEET_ID`,
+   `GOOGLE_CREDENTIALS_JSON=./secrets/service-account.json` и `IMAGE_COLLECTOR=stub`.
 
    ```bash
-   export JIRA_URL='https://jira.example.org'
-   export JIRA_TOKEN=''
-   export JIRA_JQL='summary ~ "Release" AND project = DevOps'
-   export SHEET_ID=''
-   export SHEET_RANGE='A:I'
-   export GOOGLE_CREDENTIALS_JSON='./secrets/service-account.json'
-   export IMAGE_COLLECTOR='stub'
+   cp .env.example .env
    ```
+
+   Значения с пробелами берите в одинарные кавычки — файл загружается средствами
+   оболочки, и незакавыченный `~` в `JIRA_JQL` она развернёт в домашний каталог.
 
 3. Загрузите настройки и проверьте одну среду:
 
    ```bash
-   chmod 600 env.sh secrets/service-account.json
-   source ./env.sh
+   chmod 600 .env secrets/service-account.json
+   set -a; . ./.env; set +a
    go test ./...
    go run . -env=prod-qazsu
    ```
@@ -61,15 +60,15 @@ A — имя среды, F — статус, G — релиз. Другие ди
    Stub всё равно читает Jira и Sheets. Ожидаемый лог: `релиз определён`, затем
    `dry-run: запись пропущена`. Предупреждение Jira означает, что тестовые теги
    не подтверждены вашими задачами.
-4. Для сбора реальных образов добавьте в `env.sh` параметры вашего collect-images,
-   повторно выполните `source ./env.sh` и запустите одну среду без `-write`:
+4. Для сбора реальных образов задайте в `.env` параметры вашего collect-images,
+   повторно загрузите файл и запустите одну среду без `-write`:
 
-   ```bash
-   export IMAGE_COLLECTOR='gitlab'
-   export GITLAB_URL='https://gitlab.example.org'
-   export GITLAB_TOKEN=''
-   export COLLECT_IMAGES_PROJECT_ID='234'
-   export COLLECT_IMAGES_REF='main'
+   ```dotenv
+   IMAGE_COLLECTOR=gitlab
+   GITLAB_URL=https://gitlab.example.org
+   GITLAB_TOKEN=
+   COLLECT_IMAGES_PROJECT_ID=234
+   COLLECT_IMAGES_REF=main
    ```
 
    Нужен токен с доступом к запуску pipeline и чтению jobs, artifacts и trace.
