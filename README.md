@@ -141,12 +141,11 @@ refresh token на неделю: scope `spreadsheets` не входит в ис�
    содержимое, поэтому файл должен лежать на диске, доступном сервису.
    В чат и почту файл не отправляйте: в нём client secret.
 
-   Сервер с Docker — скопировать и смонтировать каталог read-only:
+   Обычный сервер — скопировать файл и закрыть его от посторонних:
 
    ```bash
    scp client_secret_*.json user@server:/opt/tracker/secrets/web-client.json
    ssh user@server 'chmod 600 /opt/tracker/secrets/web-client.json'
-   # docker run ... -v /opt/tracker/secrets:/app/secrets:ro
    ```
 
    Kubernetes — создать Secret и подключить его в под томом `/app/secrets`:
@@ -179,9 +178,7 @@ refresh token на неделю: scope `spreadsheets` не входит в ис�
    ./env-release-tracker -google-auth
    ```
 
-   По умолчанию слушает `127.0.0.1:8080`. Для Docker используйте
-   `-google-auth-listen 0.0.0.0:8080`, предоставив порт только reverse proxy.
-   Этот режим включён в тот же Docker-образ; отдельная сборка не требуется.
+   По умолчанию слушает `127.0.0.1:8080`; другой адрес задаёт `-google-auth-listen`.
 7. Откройте ссылку из вывода команды в **своём браузере** и разрешите Google-доступ.
    Ссылка приватная, действует 10 минут и начинает только один сеанс.
    После успеха страница сообщит о подключении, процесс завершится с кодом 0.
@@ -190,24 +187,8 @@ refresh token на неделю: scope `spreadsheets` не входит в ис�
    Сначала без `-write` и с `-env <имя>` для проверки чтения нужной таблицы;
    для обновления колонки Release добавьте `-write`.
 
-Пример запуска режима входа в Docker (каталог `google-token` заранее подготовьте
-для UID 65532, используемого образом; не запускайте параллельно с tracker):
-
-```bash
-docker run --rm -it \
-  --env-file .env \
-  -p 127.0.0.1:8080:8080 \
-  -v "$PWD/secrets:/app/secrets:ro" \
-  -v "$PWD/google-token:/app/google-token" \
-  -e GOOGLE_CREDENTIALS_JSON=/app/secrets/web-client.json \
-  -e GOOGLE_TOKEN_FILE=/app/google-token/token.json \
-  -e GOOGLE_OAUTH_REDIRECT_URL=https://tracker.example.com/oauth/callback \
-  env-release-tracker:local -google-auth -google-auth-listen 0.0.0.0:8080
-```
-
-При запуске tracker оставьте те же монтирования и переменные, замените аргументы
-на обычные `-daemon -write` и подключите том для `STATE_FILE`.
-Порт и redirect URL обычному tracker не нужны. Обновление access token происходит
+Рабочий процесс запускайте с теми же `GOOGLE_CREDENTIALS_JSON` и `GOOGLE_TOKEN_FILE`
+и обычными флагами `-daemon -write`. Порт и redirect URL ему не нужны. Обновление access token происходит
 автоматически, новый токен сохраняется атомарно с правами `0600`. Если Google
 отозвал доступ, повторите `-google-auth`; рабочий процесс после этого перезапустите.
 Для локальной проверки Web OAuth разрешён также
