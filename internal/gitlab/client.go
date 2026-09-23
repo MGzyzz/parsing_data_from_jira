@@ -1,6 +1,7 @@
 package gitlab
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -116,13 +117,21 @@ func (c *Client) CollectWithRunner(ctx context.Context, environment, tagsName st
 	if err != nil {
 		return release.EnvState{}, err
 	}
-	raw, _, err = c.request(ctx, http.MethodGet, fmt.Sprintf("/jobs/%d/artifacts/images.json", j.ID), nil)
 	var state release.EnvState
+	raw, _, err = c.request(ctx, http.MethodGet, fmt.Sprintf("/jobs/%d/artifacts", j.ID), nil)
 	if err == nil {
-		state, err = parseArtifact(raw)
-	} else {
+		var body []byte
+		if body, err = artifactFromArchive(raw); err == nil {
+			state, err = parseArtifact(body)
+		}
+	}
+	if err != nil {
+		// В trace уходим только когда результата нет как такового: джоба без
+		// артефактов или архив без файла результата. Испорченное содержимое —
+		// это ошибка данных, и прятать её за успешным разбором лога нельзя.
 		var status *statusError
-		if !errors.As(err, &status) || status.code != http.StatusNotFound {
+		missing := errors.Is(err, errNoArtifactFile) || (errors.As(err, &status) && status.code == http.StatusNotFound)
+		if !missing {
 			return release.EnvState{}, err
 		}
 		c.log.Info("артефакт отсутствует, чтение лога", "env", environment, "job_id", j.ID)
@@ -167,32 +176,153 @@ func (c *Client) wait(ctx context.Context, id int) error {
 	}
 }
 
+// artifactSuffix — окончание имени файла с результатом внутри архива джобы.
+// Полное имя вида <среда>-<день-месяц-год-час>-collect-images.output содержит
+// час по UTC+5: джоба на границе часа или сдвиг часов на раннере сделали бы
+// собранное нами имя неверным, поэтому имя только сопоставляется.
+const artifactSuffix = "-collect-images.output"
+
+// errNoArtifactFile означает, что архив получен, но результата в нём нет.
+var errNoArtifactFile = errors.New("в архиве артефактов нет файла результата")
+
+// artifactFromArchive достаёт результат collect-images из архива артефактов.
+func artifactFromArchive(data []byte) ([]byte, error) {
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, fmt.Errorf("архив артефактов: %w", err)
+	}
+	for _, f := range zr.File {
+		if !strings.HasSuffix(f.Name, artifactSuffix) {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return nil, fmt.Errorf("файл %s: %w", f.Name, err)
+		}
+		// Предел на распакованный размер: сжатие скрывает настоящий объём,
+		// и доверять заявленному в заголовке архива нельзя.
+		const maxOutput = 4 << 20
+		body, err := io.ReadAll(io.LimitReader(rc, maxOutput+1))
+		rc.Close()
+		if err != nil {
+			return nil, fmt.Errorf("чтение %s: %w", f.Name, err)
+		}
+		if len(body) > maxOutput {
+			return nil, fmt.Errorf("файл %s превышает 4 MiB", f.Name)
+		}
+		return body, nil
+	}
+	return nil, errNoArtifactFile
+}
+
+// maxPipelineDepth ограничивает спуск по дочерним пайплайнам.
+// Боевой collect-images строит цепочку родитель → сгенерированный → по среде;
+// без предела испорченные данные дали бы бесконечный спуск.
+const maxPipelineDepth = 4
+
+// findJob ищет джобу collect-images в пайплайне и его дочерних пайплайнах.
+// В запущенном пайплайне её нет: там только генератор и триггер, а сама
+// джоба идёт глубже, по одному дочернему пайплайну на среду.
 func (c *Client) findJob(ctx context.Context, id int) (job, error) {
+	found, err := c.findJobsAt(ctx, id, 0)
+	if err != nil {
+		return job{}, err
+	}
+	switch len(found) {
+	case 0:
+		return job{}, errors.New("джоба collect-images не найдена в запущенном pipeline")
+	case 1:
+		return found[0], nil
+	default:
+		// Среду мы запрашиваем ровно одну. Несколько джоб означают, что пайплайн
+		// собрал не наш запуск, и любая из них может относиться к чужой среде.
+		return job{}, fmt.Errorf("pipeline %d: найдено %d джоб collect-images, ожидалась одна среда", id, len(found))
+	}
+}
+
+func (c *Client) findJobsAt(ctx context.Context, id, depth int) ([]job, error) {
+	if depth >= maxPipelineDepth {
+		return nil, fmt.Errorf("pipeline %d: превышена глубина вложенности %d", id, maxPipelineDepth)
+	}
+	jobs, err := c.jobsOf(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	var found []job
+	for _, j := range jobs {
+		if j.Name != "collect-images" {
+			continue
+		}
+		if j.Status != "success" {
+			return nil, fmt.Errorf("collect-images: статус %s", j.Status)
+		}
+		if j.ID <= 0 {
+			return nil, errors.New("collect-images: отсутствует ID джобы")
+		}
+		found = append(found, j)
+	}
+	if len(found) > 0 {
+		return found, nil
+	}
+	children, err := c.bridgesOf(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for _, child := range children {
+		// Триггер завершается успехом, не дожидаясь дочернего пайплайна, если
+		// на нём не задан strategy: depend. Задаётся он на каждом уровне свой,
+		// поэтому дожидаемся сами, а не полагаемся на статус родителя.
+		if err := c.wait(ctx, child); err != nil {
+			return nil, err
+		}
+		deeper, err := c.findJobsAt(ctx, child, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		found = append(found, deeper...)
+	}
+	return found, nil
+}
+
+// jobsOf возвращает все джобы пайплайна. Дочерние пайплайны сюда не попадают:
+// GitLab отдаёт их отдельно, через bridges.
+func (c *Client) jobsOf(ctx context.Context, id int) ([]job, error) {
+	var all []job
 	for page := 1; ; page++ {
 		raw, header, err := c.request(ctx, http.MethodGet, fmt.Sprintf("/pipelines/%d/jobs?per_page=100&page=%d&include_retried=false", id, page), nil)
 		if err != nil {
-			return job{}, err
+			return nil, err
 		}
 		var jobs []job
 		if err := json.Unmarshal(raw, &jobs); err != nil {
-			return job{}, fmt.Errorf("список jobs: %w", err)
+			return nil, fmt.Errorf("список jobs: %w", err)
 		}
-		for _, j := range jobs {
-			if j.Name == "collect-images" {
-				if j.Status != "success" {
-					return job{}, fmt.Errorf("collect-images: статус %s", j.Status)
-				}
-				if j.ID <= 0 {
-					return job{}, errors.New("collect-images: отсутствует ID джобы")
-				}
-				return j, nil
-			}
-		}
+		all = append(all, jobs...)
 		if header.Get("X-Next-Page") == "" && len(jobs) < 100 {
-			break
+			return all, nil
 		}
 	}
-	return job{}, errors.New("джоба collect-images не найдена в запущенном pipeline")
+}
+
+// bridgesOf возвращает идентификаторы дочерних пайплайнов.
+func (c *Client) bridgesOf(ctx context.Context, id int) ([]int, error) {
+	raw, _, err := c.request(ctx, http.MethodGet, fmt.Sprintf("/pipelines/%d/bridges?per_page=100", id), nil)
+	if err != nil {
+		return nil, err
+	}
+	var bridges []struct {
+		Downstream *pipeline `json:"downstream_pipeline"`
+	}
+	if err := json.Unmarshal(raw, &bridges); err != nil {
+		return nil, fmt.Errorf("список bridges: %w", err)
+	}
+	var ids []int
+	for _, b := range bridges {
+		if b.Downstream != nil && b.Downstream.ID > 0 {
+			ids = append(ids, b.Downstream.ID)
+		}
+	}
+	return ids, nil
 }
 
 type statusError struct{ code int }
