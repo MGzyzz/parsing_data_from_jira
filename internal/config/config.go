@@ -77,7 +77,10 @@ func OSLookup(key string) (string, bool) { return os.LookupEnv(key) }
 func Load(env Lookup) (Config, error) {
 	l := loader{env: env}
 
-	mode := l.str("IMAGE_COLLECTOR", "stub")
+	// По умолчанию — боевой сбор. Забытая переменная не должна включать stub:
+	// расчёт по встроенным тестовым образам выглядит успешным, а вместе
+	// с -write записывает в реестр выдуманные значения.
+	mode := l.str("IMAGE_COLLECTOR", "gitlab")
 	cfg := Config{
 		CollectorMode: mode,
 		GitLab: GitLab{

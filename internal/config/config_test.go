@@ -213,9 +213,45 @@ func TestLoadOverridesRejectsBadInterval(t *testing.T) {
 	}
 }
 
-func TestStubDoesNotRequireGitLabCredentials(t *testing.T) {
+// Незаданная переменная не должна молча включать stub: расчёт пошёл бы по
+// встроенным тестовым образам и выглядел бы успешным, а вместе с -write
+// записал бы в реестр выдуманные значения.
+func TestCollectorDefaultsToGitLab(t *testing.T) {
+	env := full()
+	delete(env, "IMAGE_COLLECTOR")
+	cfg, err := Load(lookup(env))
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if cfg.CollectorMode != "gitlab" {
+		t.Fatalf("mode=%q, ожидался gitlab", cfg.CollectorMode)
+	}
+}
+
+// Забытый IMAGE_COLLECTOR вместе с отсутствующими доступами обязан уронить
+// запуск и назвать недостающее, а не подставить тестовые данные.
+func TestMissingCollectorSettingsAreReported(t *testing.T) {
 	env := full()
 	for _, key := range []string{"IMAGE_COLLECTOR", "GITLAB_URL", "GITLAB_TOKEN", "COLLECT_IMAGES_PROJECT_ID"} {
+		delete(env, key)
+	}
+	_, err := Load(lookup(env))
+	if err == nil {
+		t.Fatal("конфиг без сборщика и без доступов к GitLab принят")
+	}
+	for _, want := range []string{"GITLAB_URL", "GITLAB_TOKEN", "COLLECT_IMAGES_PROJECT_ID"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("в ошибке не названа переменная %s: %v", want, err)
+		}
+	}
+}
+
+// Явно выбранный stub доступов к GitLab по-прежнему не требует: он нужен для
+// отладки разбора Jira и работы с таблицей без обращения к пайплайнам.
+func TestStubDoesNotRequireGitLabCredentials(t *testing.T) {
+	env := full()
+	env["IMAGE_COLLECTOR"] = "stub"
+	for _, key := range []string{"GITLAB_URL", "GITLAB_TOKEN", "COLLECT_IMAGES_PROJECT_ID"} {
 		delete(env, key)
 	}
 	cfg, err := Load(lookup(env))
