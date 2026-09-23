@@ -1,12 +1,3 @@
-# Как сервис работает в контейнере: что ему нужно снаружи и где он хранит данные.
-#
-#   docker compose up -d --build                       почасовой цикл без записи
-#   docker compose --profile google-auth run --rm --service-ports google-auth
-#                                                      вход через Google (OAuth Web)
-#
-# Настройки берутся из .env (образец — .env.example). Из него же compose читает
-# GOOGLE_CREDENTIALS_JSON — путь к ключу на хосте; внутри контейнера путь свой.
-
 x-tracker: &tracker
   build: .
   image: env-release-tracker:local
