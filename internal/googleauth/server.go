@@ -21,6 +21,16 @@ import (
 
 // Run serves a single, explicitly initiated login. It never runs the tracker.
 func Run(ctx context.Context, credentials, tokenPath, listen, redirect string, out io.Writer) error {
+	return run(ctx, credentials, tokenPath, listen, redirect, out, nil)
+}
+
+// RunWithTask keeps HTTP alive and runs task once after successful authorization.
+// Token storage is still ephemeral unless tokenPath is on persistent storage.
+func RunWithTask(ctx context.Context, credentials, tokenPath, listen, redirect string, out io.Writer, task func(context.Context) error) error {
+	return run(ctx, credentials, tokenPath, listen, redirect, out, task)
+}
+
+func run(ctx context.Context, credentials, tokenPath, listen, redirect string, out io.Writer, task func(context.Context) error) error {
 	u, err := url.Parse(redirect)
 	if err != nil || u.Host == "" || u.Path != "/oauth/callback" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
 		return fmt.Errorf("GOOGLE_OAUTH_REDIRECT_URL должен иметь вид https://host/oauth/callback")
@@ -43,11 +53,11 @@ func Run(ctx context.Context, credentials, tokenPath, listen, redirect string, o
 		return err
 	}
 	cfg.RedirectURL = redirect
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	authCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	setup := rand.Text()
 	done := make(chan error, 1)
-	handler := newHandler(ctx, cfg, setup, u.Scheme == "https", func(tok *oauth2.Token) error { return Save(tokenPath, tok) }, done)
+	handler := newHandler(authCtx, cfg, setup, u.Scheme == "https", func(tok *oauth2.Token) error { return Save(tokenPath, tok) }, done)
 	listener, err := net.Listen("tcp", listen)
 	if err != nil {
 		return err
@@ -63,13 +73,54 @@ func Run(ctx context.Context, credentials, tokenPath, listen, redirect string, o
 	u.Path = "/oauth/start"
 	u.RawQuery = url.Values{"key": {setup}}.Encode()
 	fmt.Fprintf(out, "Откройте приватную ссылку в своём браузере (действует 10 минут):\n%s\n", u.String())
+	if task != nil {
+		return serveTask(ctx, authCtx, done, served, out, task)
+	}
 	select {
 	case err := <-done:
 		return err
 	case err := <-served:
 		return err
+	case <-authCtx.Done():
+		return authCtx.Err()
+	}
+
+}
+
+// serveTask keeps the service alive even when the single run fails, avoiding
+// automatic job repeats caused by a hosting platform restarting the process.
+func serveTask(ctx, authCtx context.Context, done <-chan error, served <-chan error, out io.Writer, task func(context.Context) error) error {
+	select {
+	case err := <-done:
+		if err != nil {
+			return err
+		}
+	case err := <-served:
+		return err
+	case <-authCtx.Done():
+		return authCtx.Err()
+	}
+	fmt.Fprintln(out, "Google подключён; запускается один проверочный прогон без записи")
+	completed := make(chan error, 1)
+	go func() { completed <- task(ctx) }()
+	select {
+	case err := <-completed:
+		if err != nil {
+			fmt.Fprintln(out, "Проверочный прогон завершился с ошибкой; подробности выше в логах")
+		} else {
+			fmt.Fprintln(out, "Проверочный прогон завершён; результат смотрите в логах")
+		}
+	case err := <-served:
+		return err
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil
+	}
+	fmt.Fprintln(out, "HTTP-сервис остаётся запущенным. Автоматического повторного прогона нет")
+	select {
+	case err := <-served:
+		return err
+	case <-ctx.Done():
+		return nil
 	}
 }
 
@@ -78,6 +129,7 @@ func newHandler(ctx context.Context, cfg *oauth2.Config, setup string, secure bo
 	var state, verifier string
 	var used bool
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK); fmt.Fprint(w, "ok") })
 	mux.HandleFunc("GET /oauth/start", func(w http.ResponseWriter, r *http.Request) {
 		if subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("key")), []byte(setup)) != 1 {
 			http.Error(w, "Недействительная ссылка", http.StatusForbidden)
@@ -122,7 +174,7 @@ func newHandler(ctx context.Context, cfg *oauth2.Config, setup string, secure bo
 			done <- fmt.Errorf("не удалось обменять код или сохранить токен; проверьте OAuth client, redirect URL и права на каталог токенов")
 			return
 		}
-		fmt.Fprint(w, "Google подключён. Можно закрыть вкладку и запустить сервис. Для записи в таблицу аккаунту нужны права редактора.")
+		fmt.Fprint(w, "Google подключён. Можно закрыть вкладку. Результат работы смотрите в логах сервиса. Для записи в таблицу аккаунту нужны права редактора.")
 		done <- nil
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

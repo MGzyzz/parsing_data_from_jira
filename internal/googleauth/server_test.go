@@ -2,6 +2,8 @@ package googleauth
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -148,5 +150,97 @@ func TestRedirectValidation(t *testing.T) {
 		if err := Run(context.Background(), "missing", "", "", redirect, os.Stdout); err == nil || !strings.Contains(err.Error(), "OAuth") && !strings.Contains(err.Error(), "REDIRECT") {
 			t.Fatalf("%s: %v", redirect, err)
 		}
+	}
+}
+
+// A hosting health check must keep succeeding while the one-off job runs and
+// after it completes. Authentication expiry must not cancel the job itself.
+func TestServeTaskLifecycle(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			authCtx, expire := context.WithCancel(ctx)
+			defer expire()
+			done := make(chan error, 1)
+			served := make(chan error)
+			started := make(chan struct{})
+			release := make(chan struct{})
+			exited := make(chan error, 1)
+			idle := make(chan struct{})
+			writer := notifyWriter{idle: idle}
+			go func() {
+				exited <- serveTask(ctx, authCtx, done, served, writer, func(taskCtx context.Context) error {
+					close(started)
+					<-release
+					if err := taskCtx.Err(); err != nil {
+						return err
+					}
+					if fail {
+						return fmt.Errorf("job failed")
+					}
+					return nil
+				})
+			}()
+			select {
+			case <-started:
+				t.Fatal("job ran without authorization")
+			default:
+			}
+			done <- nil
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("job did not start")
+			}
+			expire()
+			close(release)
+			select {
+			case <-idle:
+			case <-time.After(time.Second):
+				t.Fatal("service did not remain idle after job")
+			}
+			select {
+			case err := <-exited:
+				t.Fatalf("service exited after job: %v", err)
+			default:
+			}
+			cancel()
+			select {
+			case err := <-exited:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("shutdown stuck")
+			}
+		})
+	}
+}
+
+type notifyWriter struct{ idle chan struct{} }
+
+func (w notifyWriter) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "HTTP-сервис остаётся") {
+		close(w.idle)
+	}
+	return len(p), nil
+}
+
+func TestServeTaskRejectsFailedLogin(t *testing.T) {
+	done := make(chan error, 1)
+	done <- fmt.Errorf("denied")
+	err := serveTask(t.Context(), t.Context(), done, make(chan error), io.Discard, func(context.Context) error { t.Fatal("job ran on failed login"); return nil })
+	if err == nil {
+		t.Fatal("authorization failure ignored")
+	}
+}
+
+func TestHealthEndpoint(t *testing.T) {
+	h := newHandler(t.Context(), &oauth2.Config{}, "setup", true, nil, make(chan error, 1))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/health", nil))
+	if w.Code != 200 || w.Body.String() != "ok" {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 }

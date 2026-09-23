@@ -38,16 +38,52 @@ func main() {
 	only := flag.String("env", "", "обработать только одну среду (для отладки)")
 	daemon := flag.Bool("daemon", false, "не выходить, прогонять по расписанию раз в час")
 	overridesPath := flag.String("config", "", "путь к overrides.yaml (по умолчанию — OVERRIDES_FILE из окружения)")
+	authRun := flag.Bool("google-auth-run", false, "войти через Google, выполнить один прогон -env без записи и оставить HTTP работающим")
 	auth := flag.Bool("google-auth", false, "подключить Google через браузер пользователя и завершиться")
 	authListen := flag.String("google-auth-listen", "127.0.0.1:8080", "адрес HTTP за HTTPS reverse proxy")
 	flag.Parse()
-	if *auth {
+	if *authRun && (*only == "" || *write || *daemon || *auth) {
+		slog.Error("-google-auth-run требует -env и несовместим с -write, -daemon и -google-auth")
+		os.Exit(1)
+	}
+	if *auth || *authRun {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		if err := googleauth.Run(ctx, os.Getenv("GOOGLE_CREDENTIALS_JSON"), googleauth.TokenPath(), *authListen, os.Getenv("GOOGLE_OAUTH_REDIRECT_URL"), os.Stdout); err != nil {
+		var err error
+		if *authRun {
+			cfg, loadErr := config.Load(config.OSLookup)
+			if loadErr != nil {
+				slog.Error("конфигурация", "err", loadErr)
+				os.Exit(1)
+			}
+			if cfg.CollectorMode != "gitlab" {
+				slog.Error("-google-auth-run требует IMAGE_COLLECTOR=gitlab для проверки реальной среды")
+				os.Exit(1)
+			}
+			if *overridesPath != "" {
+				cfg.OverridesFile = *overridesPath
+			}
+			slog.SetLogLoggerLevel(cfg.LogLevel)
+			err = googleauth.RunWithTask(ctx, cfg.Sheet.Credentials, googleauth.TokenPath(), *authListen, os.Getenv("GOOGLE_OAUTH_REDIRECT_URL"), os.Stdout, func(runCtx context.Context) error {
+				a, buildErr := build(runCtx, cfg, false, *only, slog.Default())
+				if buildErr != nil {
+					slog.Error("сборка зависимостей", "err", buildErr)
+					return buildErr
+				}
+				runErr := a.Run(runCtx)
+				if runErr != nil {
+					slog.Error("прогон завершился с ошибкой", "err", runErr)
+				}
+				return runErr
+			})
+		} else {
+			err = googleauth.Run(ctx, os.Getenv("GOOGLE_CREDENTIALS_JSON"), googleauth.TokenPath(), *authListen, os.Getenv("GOOGLE_OAUTH_REDIRECT_URL"), os.Stdout)
+		}
+		if err != nil {
 			slog.Error("Google OAuth", "err", err)
 			os.Exit(1)
 		}
+
 		return
 	}
 
