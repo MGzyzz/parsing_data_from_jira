@@ -141,11 +141,12 @@ refresh token на неделю: scope `spreadsheets` не входит в ис�
    содержимое, поэтому файл должен лежать на диске, доступном сервису.
    В чат и почту файл не отправляйте: в нём client secret.
 
-   Обычный сервер — скопировать файл и закрыть его от посторонних:
+   Сервер с Docker — скопировать и смонтировать каталог read-only:
 
    ```bash
    scp client_secret_*.json user@server:/opt/tracker/secrets/web-client.json
    ssh user@server 'chmod 600 /opt/tracker/secrets/web-client.json'
+   # docker run ... -v /opt/tracker/secrets:/app/secrets:ro
    ```
 
    Kubernetes — создать Secret и подключить его в под томом `/app/secrets`:
@@ -178,7 +179,9 @@ refresh token на неделю: scope `spreadsheets` не входит в ис�
    ./env-release-tracker -google-auth
    ```
 
-   По умолчанию слушает `127.0.0.1:8080`; другой адрес задаёт `-google-auth-listen`.
+   По умолчанию слушает `127.0.0.1:8080`. Для Docker используйте
+   `-google-auth-listen 0.0.0.0:8080`, предоставив порт только reverse proxy.
+   Этот режим включён в тот же Docker-образ; отдельная сборка не требуется.
 7. Откройте ссылку из вывода команды в **своём браузере** и разрешите Google-доступ.
    Ссылка приватная, действует 10 минут и начинает только один сеанс.
    После успеха страница сообщит о подключении, процесс завершится с кодом 0.
@@ -187,8 +190,24 @@ refresh token на неделю: scope `spreadsheets` не входит в ис�
    Сначала без `-write` и с `-env <имя>` для проверки чтения нужной таблицы;
    для обновления колонки Release добавьте `-write`.
 
-Рабочий процесс запускайте с теми же `GOOGLE_CREDENTIALS_JSON` и `GOOGLE_TOKEN_FILE`
-и обычными флагами `-daemon -write`. Порт и redirect URL ему не нужны. Обновление access token происходит
+Пример запуска режима входа в Docker (каталог `google-token` заранее подготовьте
+для UID 65532, используемого образом; не запускайте параллельно с tracker):
+
+```bash
+docker run --rm -it \
+  --env-file .env \
+  -p 127.0.0.1:8080:8080 \
+  -v "$PWD/secrets:/app/secrets:ro" \
+  -v "$PWD/google-token:/app/google-token" \
+  -e GOOGLE_CREDENTIALS_JSON=/app/secrets/web-client.json \
+  -e GOOGLE_TOKEN_FILE=/app/google-token/token.json \
+  -e GOOGLE_OAUTH_REDIRECT_URL=https://tracker.example.com/oauth/callback \
+  env-release-tracker:local -google-auth -google-auth-listen 0.0.0.0:8080
+```
+
+При запуске tracker оставьте те же монтирования и переменные, замените аргументы
+на обычные `-daemon -write` и подключите том `STATE_FILE`, как в разделе Docker.
+Порт и redirect URL обычному tracker не нужны. Обновление access token происходит
 автоматически, новый токен сохраняется атомарно с правами `0600`. Если Google
 отозвал доступ, повторите `-google-auth`; рабочий процесс после этого перезапустите.
 Для локальной проверки Web OAuth разрешён также
@@ -382,6 +401,50 @@ go build -o env-release-tracker .
 В контейнере `STATE_FILE` должен указывать на смонтированный том: иначе время
 последнего опроса теряется вместе с контейнером и `interval` из overrides не
 сработает ни разу.
+
+## Docker
+
+```bash
+docker build -t env-release-tracker:local .
+```
+
+Образ двухслойный: сборка идёт в `golang:1.27-alpine`, а работает бинарник в
+`gcr.io/distroless/static-debian12:nonroot` — там нет ни шелла, ни пакетного
+менеджера, и процесс уже запускается под непривилегированным пользователем.
+Готовый образ — около 17 МБ.
+
+Внутрь попадают только бинарник и `overrides.yaml`. Секреты в слои не
+проходят: `.dockerignore` исключает `.env`, каталог `secrets/` и файлы токенов.
+
+`ENTRYPOINT` — сам сервис, поэтому флаги передаются аргументами:
+
+```bash
+docker run --rm \
+  --env-file .env \
+  -v "$PWD/secrets:/app/secrets:ro" \
+  -v env-release-tracker-state:/app/state \
+  -e GOOGLE_CREDENTIALS_JSON=/app/secrets/service-account.json \
+  -e STATE_FILE=/app/state/state.json \
+  env-release-tracker:local -daemon -write
+```
+
+Что важно при запуске на сервере:
+
+- **Ключ Google монтируется, а не встраивается.** `GOOGLE_CREDENTIALS_JSON`
+  должен указывать на смонтированный файл. Внутри образа секретов нет.
+- **Google:** service account либо серверный OAuth через `-google-auth` (см. выше).
+  Для OAuth каталог `GOOGLE_TOKEN_FILE` должен быть постоянным и доступным для записи:
+  сервис атомарно сохраняет обновлённые токены.
+- **`STATE_FILE` — на том.** По умолчанию файл лежит рядом с бинарником и
+  пропадёт вместе с контейнером, а вместе с ним и время последнего опроса,
+  на котором держится `interval` из overrides. Если `interval` не используется,
+  том можно не подключать.
+- **Свои правила по средам** подключаются монтированием файла и переменной
+  `OVERRIDES_FILE`; встроенный `overrides.yaml` тогда не используется.
+- **Расписание.** Для почасового запуска снаружи (например, Kubernetes CronJob)
+  контейнер запускается без `-daemon` и завершается сам. Задайте
+  `concurrencyPolicy: Forbid`: цикл идёт около 15 минут и при почасовом
+  расписании может догнать сам себя.
 
 ## Структура проекта
 
