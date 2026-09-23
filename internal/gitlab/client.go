@@ -284,37 +284,42 @@ func (c *Client) findJobsAt(ctx context.Context, id, depth int) ([]job, error) {
 	return found, nil
 }
 
-// jobsOf возвращает все джобы пайплайна. Дочерние пайплайны сюда не попадают:
-// GitLab отдаёт их отдельно, через bridges.
-func (c *Client) jobsOf(ctx context.Context, id int) ([]job, error) {
-	var all []job
+// fetchPaged собирает все страницы списочного ответа GitLab.
+// Это функция, а не метод: методы в Go не могут иметь параметров типа.
+func fetchPaged[T any](ctx context.Context, c *Client, what, path, query string) ([]T, error) {
+	var all []T
 	for page := 1; ; page++ {
-		raw, header, err := c.request(ctx, http.MethodGet, fmt.Sprintf("/pipelines/%d/jobs?per_page=100&page=%d&include_retried=false", id, page), nil)
+		raw, header, err := c.request(ctx, http.MethodGet, fmt.Sprintf("%s?per_page=100&page=%d%s", path, page, query), nil)
 		if err != nil {
 			return nil, err
 		}
-		var jobs []job
-		if err := json.Unmarshal(raw, &jobs); err != nil {
-			return nil, fmt.Errorf("список jobs: %w", err)
+		var batch []T
+		if err := json.Unmarshal(raw, &batch); err != nil {
+			return nil, fmt.Errorf("%s: %w", what, err)
 		}
-		all = append(all, jobs...)
-		if header.Get("X-Next-Page") == "" && len(jobs) < 100 {
+		all = append(all, batch...)
+		if header.Get("X-Next-Page") == "" && len(batch) < 100 {
 			return all, nil
 		}
 	}
 }
 
+// jobsOf возвращает все джобы пайплайна. Дочерние пайплайны сюда не попадают:
+// GitLab отдаёт их отдельно, через bridges.
+func (c *Client) jobsOf(ctx context.Context, id int) ([]job, error) {
+	return fetchPaged[job](ctx, c, "список jobs", fmt.Sprintf("/pipelines/%d/jobs", id), "&include_retried=false")
+}
+
+// bridge — триггер дочернего пайплайна в ответе GitLab.
+type bridge struct {
+	Downstream *pipeline `json:"downstream_pipeline"`
+}
+
 // bridgesOf возвращает идентификаторы дочерних пайплайнов.
 func (c *Client) bridgesOf(ctx context.Context, id int) ([]int, error) {
-	raw, _, err := c.request(ctx, http.MethodGet, fmt.Sprintf("/pipelines/%d/bridges?per_page=100", id), nil)
+	bridges, err := fetchPaged[bridge](ctx, c, "список bridges", fmt.Sprintf("/pipelines/%d/bridges", id), "")
 	if err != nil {
 		return nil, err
-	}
-	var bridges []struct {
-		Downstream *pipeline `json:"downstream_pipeline"`
-	}
-	if err := json.Unmarshal(raw, &bridges); err != nil {
-		return nil, fmt.Errorf("список bridges: %w", err)
 	}
 	var ids []int
 	for _, b := range bridges {

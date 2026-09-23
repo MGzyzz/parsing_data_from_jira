@@ -500,3 +500,49 @@ func TestArchiveRejectsOversizedResult(t *testing.T) {
 		t.Fatalf("ошибка не про размер: %v", err)
 	}
 }
+
+// GitLab отдаёт списки страницами. Промежуточный пайплайн получает по триггеру
+// на каждую среду, поэтому при переходе на список сред bridges перестанут
+// помещаться на одну страницу — и часть сред потерялась бы молча, без ошибки.
+func TestCollectReadsAllBridgePages(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/api/v4/projects/123")
+		id, tail, _ := strings.Cut(strings.TrimPrefix(rest, "/pipelines/"), "/")
+		switch {
+		case rest == "/pipeline":
+			fmt.Fprint(w, `{"id":7}`)
+		case tail == "":
+			fmt.Fprintf(w, `{"id":%s,"status":"success"}`, id)
+		case tail == "jobs" && id == "9":
+			fmt.Fprint(w, `[{"id":11,"name":"collect-images","status":"success"}]`)
+		case tail == "jobs":
+			fmt.Fprint(w, `[]`)
+		case tail == "bridges" && id == "7":
+			// Джоба живёт в пайплайне со второй страницы.
+			if r.URL.Query().Get("page") == "2" {
+				fmt.Fprint(w, `[{"name":"collect-images","downstream_pipeline":{"id":9,"status":"success"}}]`)
+				return
+			}
+			w.Header().Set("X-Next-Page", "2")
+			fmt.Fprint(w, `[{"name":"collect-images","downstream_pipeline":{"id":8,"status":"success"}}]`)
+		case tail == "bridges":
+			fmt.Fprint(w, `[]`)
+		case strings.HasPrefix(rest, "/jobs/11/artifacts"):
+			w.Write(artifactZip(t, artifact{Environment: "demo", Namespace: "demo", Images: []string{"redo-backend:main-1.29.13"}, CollectedAt: time.Now()}))
+		default:
+			t.Errorf("unexpected endpoint %s", r.URL)
+		}
+	}))
+	defer srv.Close()
+	c, err := New(Config{URL: srv.URL, Token: "test-token", ProjectID: 123, Ref: "main", PollInterval: time.Millisecond}, srv.Client(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := c.Collect(t.Context(), "demo")
+	if err != nil {
+		t.Fatalf("вторая страница bridges не прочитана: %v", err)
+	}
+	if len(state.Tags) != 1 {
+		t.Fatalf("state=%+v", state)
+	}
+}
