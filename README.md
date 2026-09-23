@@ -53,7 +53,13 @@ collect-images генерирует по дочернему пайплайну �
 Сложите ключи в каталог `secrets/` — он исключён из Git:
 
 ```bash
-mkdir -p secrets
+mkdir -p secrets && chmod 700 secrets
+```
+
+Положив туда файлы ключей, закройте их от посторонних:
+
+```bash
+chmod 600 secrets/*
 ```
 
 ### Google Sheets
@@ -182,7 +188,7 @@ A — имя среды, F — статус, G — релиз. Другие ди
 
    ```bash
    cp .env.example .env
-   chmod 600 .env secrets/*
+   chmod 600 .env
    ```
 
    Обязательны `JIRA_URL`, `JIRA_TOKEN`, `SHEET_ID`, `GOOGLE_CREDENTIALS_JSON`,
