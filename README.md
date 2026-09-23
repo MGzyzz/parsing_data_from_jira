@@ -407,6 +407,40 @@ docker run --rm \
   `concurrencyPolicy: Forbid`: цикл идёт около 15 минут и при почасовом
   расписании может догнать сам себя.
 
+## Развёртывание в Kubernetes
+
+В каталоге [deploy/](deploy/) лежат два манифеста. Значения в угловых скобках
+заменяются под свою инсталляцию: реестр образов, тег, при необходимости
+`storageClassName`.
+
+| Файл | Когда |
+|------|-------|
+| [deploy/cronjob.yaml](deploy/cronjob.yaml) | Основной вариант: раз в час, один цикл и выход |
+| [deploy/deployment.yaml](deploy/deployment.yaml) | Запасной: долгоживущий процесс с `-daemon` |
+
+Нужны два секрета:
+
+**`env-release-tracker`** — переменные окружения, подключается через `envFrom`.
+Состав — как в [.env.example](.env.example): `JIRA_URL`, `JIRA_TOKEN`,
+`SHEET_ID`, `GITLAB_URL`, `GITLAB_TOKEN`, `COLLECT_IMAGES_PROJECT_ID`,
+`ENV_STATUSES` и остальные. По ТЗ значения приходят из Vault.
+
+**`env-release-tracker-google`** — ключ service account одним файлом
+`service-account.json`, монтируется только на чтение.
+
+Что в манифестах сделано не по умолчанию и почему:
+
+- **`concurrencyPolicy: Forbid`** у CronJob — цикл идёт около 15 минут, и без
+  запрета почасовое расписание однажды запустит второй прогон поверх первого.
+- **`backoffLimit: 0`** — повтор упавшего прогона это ещё сотня пайплайнов на
+  боевых раннерах, а причины отказа обычно общие и за минуту не проходят.
+- **`strategy: Recreate`** у Deployment — при `RollingUpdate` старый и новый
+  поды какое-то время работают вместе, то есть пишут в колонку вдвоём.
+- **`readOnlyRootFilesystem: true`** — сервис пишет только `STATE_FILE`, и тот
+  лежит на смонтированном томе.
+- **`fsGroup: 65532`** — UID пользователя `nonroot` в distroless: под ним же
+  должен быть доступен том с состоянием.
+
 ## Структура проекта
 
 ```text

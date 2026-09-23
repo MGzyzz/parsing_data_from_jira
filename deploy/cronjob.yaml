@@ -1,0 +1,96 @@
+# Почасовой запуск: сервис выполняет один цикл и завершается.
+# Основной вариант развёртывания. Значения в угловых скобках заменяются
+# под свою инсталляцию.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: env-release-tracker-state
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 64Mi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: env-release-tracker
+spec:
+  schedule: "0 * * * *"
+
+  # Цикл по активным средам занимает около 15 минут. Без Forbid почасовое
+  # расписание рано или поздно запустит второй прогон поверх первого: оба
+  # начнут гонять пайплайны по одним средам и писать в одну колонку.
+  concurrencyPolicy: Forbid
+
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+
+  jobTemplate:
+    spec:
+      # Повтор упавшего прогона — это ещё сотня пайплайнов на боевых раннерах.
+      # Причины отказа обычно общие (протухший токен, недоступный GitLab),
+      # и повтор через минуту их не лечит: дешевле дождаться следующего часа.
+      backoffLimit: 0
+
+      template:
+        spec:
+          restartPolicy: Never
+
+          securityContext:
+            runAsNonRoot: true
+            # UID пользователя nonroot в distroless: под ним же должен быть
+            # доступен том с состоянием.
+            fsGroup: 65532
+
+          containers:
+            - name: env-release-tracker
+              image: <registry>/env-release-tracker:<tag>
+
+              # ENTRYPOINT — сам сервис, поэтому здесь только флаги.
+              # Без -write прогон только считает и пишет в лог.
+              args: ["-write"]
+
+              envFrom:
+                # Секрет с JIRA_TOKEN, GITLAB_TOKEN, SHEET_ID и остальными
+                # переменными из .env.example. По ТЗ значения приходят из Vault.
+                - secretRef:
+                    name: env-release-tracker
+
+              env:
+                - name: GOOGLE_CREDENTIALS_JSON
+                  value: /app/secrets/service-account.json
+                - name: STATE_FILE
+                  value: /app/state/state.json
+
+              volumeMounts:
+                - name: google-key
+                  mountPath: /app/secrets
+                  readOnly: true
+                - name: state
+                  mountPath: /app/state
+
+              securityContext:
+                allowPrivilegeEscalation: false
+                # Всё, что сервис пишет, лежит на смонтированном томе.
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 256Mi
+
+          volumes:
+            - name: google-key
+              secret:
+                # Ключ service account. Личный OAuth на сервере не завершить:
+                # вход редиректит на 127.0.0.1 самого сервера.
+                secretName: env-release-tracker-google
+            - name: state
+              persistentVolumeClaim:
+                claimName: env-release-tracker-state
