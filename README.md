@@ -70,7 +70,7 @@ chmod 600 secrets/*
 
 #### Service account — основной способ
 
-Подходит для сервера: не истекает, браузер не требуется.
+Подходит для сервера: браузер не требуется. Работает, пока действуют ключ и права доступа.
 
 1. Включите **Google Sheets API** в проекте Google Cloud:
    [console.cloud.google.com/apis/enableflow;apiid=sheets.googleapis.com](https://console.cloud.google.com/apis/enableflow;apiid=sheets.googleapis.com)
@@ -106,15 +106,87 @@ chmod 600 secrets/*
    go run ./cmd/googleauth
    ```
 
-Команда откроет браузер и сохранит токен в `secrets/token.json`; сервис читает
-его по этому пути относительно рабочего каталога.
+Команда откроет браузер и сохранит токен в `GOOGLE_TOKEN_FILE` (по умолчанию
+`secrets/token.json` относительно рабочего каталога). Каталог должен быть доступен
+сервису для записи обновлённых токенов.
 
 **Такой токен живёт 7 дней.** Пока приложение в статусе `Testing`, Google выдаёт
 refresh token на неделю: scope `spreadsheets` не входит в исключение для базовых
 профильных scope. По истечении срока прогон падает на чтении реестра с
 `invalid_grant: Token has been expired or revoked` — лечится повторным запуском
-`go run ./cmd/googleauth`. Ограничение снимает либо публикация приложения
-(требует верификации из-за чувствительного scope), либо service account.
+`go run ./cmd/googleauth`. Для постоянной работы настройте подходящий статус приложения и аудиторию
+в Google Cloud (верификация зависит от сценария использования), либо используйте service account.
+
+### Вход пользователя через Google на сервере
+
+Для одного общего реестра поддерживается OAuth client типа **Web application**.
+Это отдельный режим настройки: `-google-auth` принимает вход, сохраняет токен
+и завершает процесс. Он не запускает пайплайны и не изменяет таблицу.
+После подключения запускайте обычный сервис. Для записи аккаунт пользователя
+должен иметь права **Редактора** на таблицу; согласие OAuth само этих прав не выдаёт.
+Это не многопользовательский портал: один файл токена соответствует одному аккаунту.
+
+1. В Google Cloud включите Sheets API и настройте аудиторию OAuth consent screen.
+   Для External + Testing добавьте аккаунт в Test users. При Sheets scope refresh
+   token в этом режиме истекает через 7 дней — серверный вход не отменяет это правило.
+2. Создайте OAuth client **Web application**, добавьте Authorized redirect URI:
+   `https://tracker.example.com/oauth/callback` (замените домен своим).
+3. Сохраните скачанный JSON на сервере как секрет. Настройте переменные:
+
+   ```bash
+   GOOGLE_CREDENTIALS_JSON=/app/secrets/web-client.json
+   GOOGLE_TOKEN_FILE=/app/google-token/token.json
+   GOOGLE_OAUTH_REDIRECT_URL=https://tracker.example.com/oauth/callback
+   ```
+
+4. Подготовьте постоянный каталог `/app/google-token`, доступный для записи
+   пользователю сервиса. JSON клиента можно монтировать read-only, каталог токена —
+   read-write. Токен содержит долговременный доступ; не добавляйте его в Git или образ.
+5. Направьте HTTPS reverse proxy на HTTP-порт режима входа, сохраняя пути
+   `/oauth/start` и `/oauth/callback` и параметры запроса. Отключите access log
+   для этих путей: URL содержат временный ключ настройки и код авторизации.
+6. Остановите обычный экземпляр сервиса на время подключения/переподключения и запустите:
+
+   ```bash
+   ./env-release-tracker -google-auth
+   ```
+
+   По умолчанию слушает `127.0.0.1:8080`. Для Docker используйте
+   `-google-auth-listen 0.0.0.0:8080`, предоставив порт только reverse proxy.
+   Этот режим включён в тот же Docker-образ; отдельная сборка не требуется.
+7. Откройте ссылку из вывода команды в **своём браузере** и разрешите Google-доступ.
+   Ссылка приватная, действует 10 минут и начинает только один сеанс.
+   После успеха страница сообщит о подключении, процесс завершится с кодом 0.
+   При отказе или ошибке повторите команду для новой ссылки.
+8. Запустите сервис с теми же `GOOGLE_CREDENTIALS_JSON` и `GOOGLE_TOKEN_FILE`.
+   Сначала без `-write` и с `-env <имя>` для проверки чтения нужной таблицы;
+   для обновления колонки Release добавьте `-write`.
+
+Пример запуска режима входа в Docker (каталог `google-token` заранее подготовьте
+для UID 65532, используемого образом; не запускайте параллельно с tracker):
+
+```bash
+docker run --rm -it \
+  --env-file .env \
+  -p 127.0.0.1:8080:8080 \
+  -v "$PWD/secrets:/app/secrets:ro" \
+  -v "$PWD/google-token:/app/google-token" \
+  -e GOOGLE_CREDENTIALS_JSON=/app/secrets/web-client.json \
+  -e GOOGLE_TOKEN_FILE=/app/google-token/token.json \
+  -e GOOGLE_OAUTH_REDIRECT_URL=https://tracker.example.com/oauth/callback \
+  env-release-tracker:local -google-auth -google-auth-listen 0.0.0.0:8080
+```
+
+При запуске tracker оставьте те же монтирования и переменные, замените аргументы
+на обычные `-daemon -write` и подключите том `STATE_FILE`, как в разделе Docker.
+Порт и redirect URL обычному tracker не нужны. Обновление access token происходит
+автоматически, новый токен сохраняется атомарно с правами `0600`. Если Google
+отозвал доступ, повторите `-google-auth`; рабочий процесс после этого перезапустите.
+Для локальной проверки Web OAuth разрешён также
+`http://localhost:8080/oauth/callback` — его нужно добавить в Google Cloud.
+
+Подробнее: [серверный OAuth](https://developers.google.com/identity/protocols/oauth2/web-server),
+[сроки жизни refresh token](https://developers.google.com/identity/protocols/oauth2#expiration).
 
 ### GitLab
 
@@ -394,8 +466,9 @@ docker run --rm \
 
 - **Ключ Google монтируется, а не встраивается.** `GOOGLE_CREDENTIALS_JSON`
   должен указывать на смонтированный файл. Внутри образа секретов нет.
-- **Только service account.** Вход через личный OAuth на сервере не завершить:
-  редирект ведёт на `127.0.0.1` самого сервера, и порт каждый раз новый.
+- **Google:** service account либо серверный OAuth через `-google-auth` (см. выше).
+  Для OAuth каталог `GOOGLE_TOKEN_FILE` должен быть постоянным и доступным для записи:
+  сервис атомарно сохраняет обновлённые токены.
 - **`STATE_FILE` — на том.** По умолчанию файл лежит рядом с бинарником и
   пропадёт вместе с контейнером, а вместе с ним и время последнего опроса,
   на котором держится `interval` из overrides. Если `interval` не используется,

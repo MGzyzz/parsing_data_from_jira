@@ -38,3 +38,7 @@ GEMINI.md
 # где крутится сервис и по каким шаблонам CI). Файлы остаются на диске.
 /.gitlab-ci.yml
 /.pre-commit-config.yaml
+
+# Server OAuth persistent volume
+google-token/
+.oauth-*

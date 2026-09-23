@@ -5,7 +5,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
+	"env-release-tracker/internal/googleauth"
 	"flag"
 	"fmt"
 	"log"
@@ -24,7 +24,7 @@ import (
 
 func main() {
 	secretPath := flag.String("secret", envOr("GOOGLE_CREDENTIALS_JSON", "secrets/client_secret.json"), "путь к OAuth client secret (installed app)")
-	tokenPath := flag.String("token", "secrets/token.json", "куда сохранить полученный токен")
+	tokenPath := flag.String("token", googleauth.TokenPath(), "куда сохранить полученный токен")
 	sheetID := flag.String("sheet", os.Getenv("SHEET_ID"), "id таблицы для проверки доступа (пусто — пропустить проверку)")
 	flag.Parse()
 
@@ -158,12 +158,7 @@ func openBrowser(url string) {
 }
 
 func saveToken(path string, tok *oauth2.Token) error {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return json.NewEncoder(f).Encode(tok)
+	return googleauth.Save(path, tok)
 }
 
 // checkAccess проверяет доступ чтением метаданных таблицы.

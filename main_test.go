@@ -8,8 +8,7 @@ import (
 )
 
 // googleClientOption выбирает способ авторизации по содержимому файла
-// credentials. Подсказка в ошибке важна: на сервере путь через личный OAuth
-// не завершить, и человек должен узнать об этом из сообщения, а не опытным путём.
+// credentials; отсутствующий токен сопровождается инструкцией для входа.
 func TestGoogleClientOptionByFileType(t *testing.T) {
 	dir := t.TempDir()
 	// Токен ищется относительно рабочего каталога — уводим его от репозитория.
@@ -35,7 +34,7 @@ func TestGoogleClientOptionByFileType(t *testing.T) {
 		t.Fatal("OAuth без сохранённого токена принят")
 	}
 	if !strings.Contains(err.Error(), "service account") {
-		t.Errorf("ошибка не подсказывает про service account, хотя на сервере другого пути нет: %v", err)
+		t.Errorf("ошибка не подсказывает про service account, как альтернативу OAuth: %v", err)
 	}
 
 	junk := write("junk.json", `{"whatever":1}`)
@@ -45,5 +44,20 @@ func TestGoogleClientOptionByFileType(t *testing.T) {
 
 	if _, err := googleClientOption(t.Context(), filepath.Join(dir, "missing.json")); err == nil {
 		t.Error("отсутствующий файл принят")
+	}
+}
+
+func TestWebOAuthToken(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "client.json")
+	os.WriteFile(path, []byte(`{"web":{"client_id":"id","client_secret":"s","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","redirect_uris":["https://example.com/oauth/callback"]}}`), 0600)
+	token := filepath.Join(dir, "token.json")
+	t.Setenv("GOOGLE_TOKEN_FILE", token)
+	if _, err := googleClientOption(t.Context(), path); err == nil || !strings.Contains(err.Error(), "-google-auth") {
+		t.Fatalf("%v", err)
+	}
+	os.WriteFile(token, []byte(`{"access_token":"access","refresh_token":"refresh","token_type":"Bearer"}`), 0600)
+	if _, err := googleClientOption(t.Context(), path); err != nil {
+		t.Fatal(err)
 	}
 }

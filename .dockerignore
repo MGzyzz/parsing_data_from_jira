@@ -20,3 +20,7 @@ env-release-tracker
 .gitignore
 docs/
 *.md
+
+# Server OAuth persistent volume
+google-token/
+.oauth-*

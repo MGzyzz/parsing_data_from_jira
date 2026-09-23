@@ -23,6 +23,7 @@ import (
 	"env-release-tracker/internal/app"
 	"env-release-tracker/internal/config"
 	"env-release-tracker/internal/gitlab"
+	"env-release-tracker/internal/googleauth"
 	"env-release-tracker/internal/jira"
 	"env-release-tracker/internal/registry"
 	"env-release-tracker/internal/release"
@@ -37,7 +38,18 @@ func main() {
 	only := flag.String("env", "", "обработать только одну среду (для отладки)")
 	daemon := flag.Bool("daemon", false, "не выходить, прогонять по расписанию раз в час")
 	overridesPath := flag.String("config", "", "путь к overrides.yaml (по умолчанию — OVERRIDES_FILE из окружения)")
+	auth := flag.Bool("google-auth", false, "подключить Google через браузер пользователя и завершиться")
+	authListen := flag.String("google-auth-listen", "127.0.0.1:8080", "адрес HTTP за HTTPS reverse proxy")
 	flag.Parse()
+	if *auth {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := googleauth.Run(ctx, os.Getenv("GOOGLE_CREDENTIALS_JSON"), googleauth.TokenPath(), *authListen, os.Getenv("GOOGLE_OAUTH_REDIRECT_URL"), os.Stdout); err != nil {
+			slog.Error("Google OAuth", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	log := slog.Default()
 
@@ -155,12 +167,8 @@ func build(ctx context.Context, cfg config.Config, write bool, only string, log 
 	}, log), nil
 }
 
-// googleTokenPath задаёт путь к токену, сохранённому командой googleauth.
-// Используется только для OAuth-входа пользователя.
-const googleTokenPath = "secrets/token.json"
-
 // googleClientOption создаёт параметры авторизации Sheets по типу credentials.
-// Для service account используется ключ, для installed-app — сохранённый OAuth-токен.
+// Для service account используется ключ, для Desktop/Web app — сохранённый OAuth-токен.
 func googleClientOption(ctx context.Context, credentialsPath string) (option.ClientOption, error) {
 	raw, err := os.ReadFile(credentialsPath)
 	if err != nil {
@@ -170,6 +178,7 @@ func googleClientOption(ctx context.Context, credentialsPath string) (option.Cli
 	var probe struct {
 		Type      string          `json:"type"`
 		Installed json.RawMessage `json:"installed"`
+		Web       json.RawMessage `json:"web"`
 	}
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return nil, fmt.Errorf("разбор %s: %w", credentialsPath, err)
@@ -179,18 +188,15 @@ func googleClientOption(ctx context.Context, credentialsPath string) (option.Cli
 	case probe.Type == "service_account":
 		return option.WithCredentialsFile(credentialsPath), nil
 
-	case len(probe.Installed) > 0:
+	case len(probe.Installed) > 0 || len(probe.Web) > 0:
+		googleTokenPath := googleauth.TokenPath()
 		oauthCfg, err := google.ConfigFromJSON(raw, sheets.SpreadsheetsScope)
 		if err != nil {
 			return nil, fmt.Errorf("разбор OAuth client secret: %w", err)
 		}
 		tokenRaw, err := os.ReadFile(googleTokenPath)
 		if errors.Is(err, os.ErrNotExist) {
-			// На сервере этот путь тупиковый: вход завершается редиректом на
-			// 127.0.0.1 той машины, где запущена команда, и порт каждый раз новый.
-			return nil, fmt.Errorf("%s не найден. Локально: go run ./cmd/googleauth. "+
-				"На сервере такой вход не завершить — нужен ключ service account "+
-				"в GOOGLE_CREDENTIALS_JSON", googleTokenPath)
+			return nil, fmt.Errorf("%s не найден. Для Web application запустите -google-auth; для Desktop app: go run ./cmd/googleauth; также поддерживается service account", googleTokenPath)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("чтение %s: %w", googleTokenPath, err)
@@ -199,7 +205,10 @@ func googleClientOption(ctx context.Context, credentialsPath string) (option.Cli
 		if err := json.Unmarshal(tokenRaw, &tok); err != nil {
 			return nil, fmt.Errorf("разбор %s: %w", googleTokenPath, err)
 		}
-		return option.WithTokenSource(oauthCfg.TokenSource(ctx, &tok)), nil
+		if tok.RefreshToken == "" {
+			return nil, fmt.Errorf("нет refresh token: повторите вход Google")
+		}
+		return option.WithTokenSource(googleauth.Persistent(oauthCfg.TokenSource(ctx, &tok), googleTokenPath, &tok)), nil
 
 	default:
 		return nil, fmt.Errorf("%s: не похоже ни на service account, ни на OAuth client secret", credentialsPath)
