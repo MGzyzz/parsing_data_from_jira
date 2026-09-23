@@ -191,6 +191,148 @@ docker run --rm -it \
 Подробнее: [серверный OAuth](https://developers.google.com/identity/protocols/oauth2/web-server),
 [сроки жизни refresh token](https://developers.google.com/identity/protocols/oauth2#expiration).
 
+### Проверка prod-holding на Render Free без Docker
+
+Режим `-google-auth-run` выполняет Google-вход и **один реальный прогон выбранной
+среды без записи в таблицу** в одном процессе. После результата или ошибки
+прогона HTTP-сервер продолжает работать, повторных прогонов по расписанию нет.
+В отличие от него, `-google-auth` только сохраняет токен и завершает процесс.
+
+#### 1. Ветка и настройки Render
+
+Отправьте актуальную ветку в GitHub:
+
+```bash
+git push -u origin google-server-oauth
+```
+
+В Render создайте **Web Service** из репозитория и задайте:
+
+| Настройка | Значение |
+|---|---|
+| Branch | `google-server-oauth` |
+| Language / Runtime | **Go** |
+| Instance Type | **Free** |
+| Root Directory | пусто |
+| Build Command | `GOTOOLCHAIN=auto go build -o env-release-tracker .` |
+| Health Check Path | `/health` |
+
+**Start Command:**
+
+```bash
+./env-release-tracker -google-auth-run -env prod-holding -google-auth-listen 0.0.0.0:$PORT
+```
+
+Render предоставляет HTTPS и переменную `PORT`. Отдельный Docker или Nginx
+не нужен. Проект требует Go 1.27.0; автоматический выбор toolchain включён
+в команде сборки. Главная страница `/` отвечает 404 — это ожидаемо.
+
+Скопируйте фактический URL созданного сервиса. Для текущего тестового сервиса:
+`https://parsing-data-from-jira.onrender.com`. Если первый запуск упал из-за
+отсутствующих настроек Google, сервис всё равно создан: задайте настройки ниже
+и повторите деплой.
+
+#### 2. Google OAuth и Secret File
+
+В Google Cloud включите Sheets API. Откройте **Google Auth Platform → Clients**
+и выберите OAuth client типа **Web application**. В **Authorized redirect URIs**
+(не в **Authorized JavaScript origins**) добавьте:
+
+```text
+https://parsing-data-from-jira.onrender.com/oauth/callback
+```
+
+Если у вашего сервиса другой домен, замените его в этом адресе и в переменной
+ниже. Сохраните настройки. Для External + Testing добавьте аккаунт, которым
+будете входить, в **Audience → Test users**.
+
+В Render → **Environment → Secret Files → Add Secret File**:
+
+- **Filename:** `web-client.json`.
+- **Contents:** полное содержимое JSON этого Web-клиента.
+
+Render размещает файл в `/etc/secrets/web-client.json`; папку `secrets`
+вручную создавать не нужно. JSON и токены не добавляйте в Git.
+Если скачанный JSON потерян, сначала проверьте «Загрузки». Google позволяет
+получить полный client secret только при создании: при необходимости откройте
+клиент → **Add secret**, сразу сохраните новый секрет/JSON и обновите Secret File.
+
+#### 3. Переменные Environment
+
+| Переменная | Значение |
+|---|---|
+| `GOOGLE_CREDENTIALS_JSON` | `/etc/secrets/web-client.json` |
+| `GOOGLE_TOKEN_FILE` | `/tmp/google-auth/token.json` |
+| `GOOGLE_OAUTH_REDIRECT_URL` | `https://parsing-data-from-jira.onrender.com/oauth/callback` |
+| `IMAGE_COLLECTOR` | `gitlab` |
+| `GITLAB_URL` | `https://gitlab.metadoc.kz` |
+| `GITLAB_TOKEN` | действующий токен запуска пайплайнов и чтения результатов |
+| `COLLECT_IMAGES_PROJECT_ID` | `234` |
+| `COLLECT_IMAGES_REF` | `main` |
+| `JIRA_URL` | `https://jira.metadoc.kz` |
+| `JIRA_TOKEN` | действующий технический токен чтения Jira |
+| `SHEET_ID` | ID тестовой копии реестра |
+| `ENV_STATUSES` | `active` |
+| `CONCURRENCY` | `1` |
+| `STATE_FILE` | `/tmp/tracker-state.json` |
+
+Значения в Render вводятся без внешних shell-кавычек. Остальные настройки
+можно оставить по умолчанию. Если задаёте `JIRA_JQL`, используйте
+`summary ~ "Release" AND project = DevOps` без внешних одинарных кавычек.
+
+`SHEET_ID` — часть URL таблицы между `/d/` и `/edit`, не весь адрес.
+В тестовой копии должна быть строка `prod-holding` со статусом `active`:
+вкладка `gid=0`, первая строка — заголовки, имя в A, статус в F, релиз в G.
+Выбранному Google-аккаунту достаточно доступа на чтение для этого режима.
+
+#### 4. Деплой и проверка результата
+
+1. Сохраните настройки и выполните **Manual Deploy → Deploy latest commit**.
+2. После запуска откройте **Logs** и скопируйте свежую приватную ссылку
+   `/oauth/start?key=...` целиком. Она действует 10 минут с момента старта.
+3. Откройте ссылку в браузере и подтвердите доступ Google.
+4. После сохранения токена сервис автоматически прочитает Sheets и Jira,
+   запустит настоящий collect-images для `prod-holding` и рассчитает релиз.
+5. Проверьте сообщения в Logs:
+
+   ```text
+   Google подключён; запускается один проверочный прогон без записи
+   ... пайплайн GitLab запущен ...
+   ... релиз определён ... env=prod-holding ...
+   ... dry-run: запись пропущена ...
+   Проверочный прогон завершён; результат смотрите в логах
+   HTTP-сервис остаётся запущенным. Автоматического повторного прогона нет
+   ```
+
+**Критерий успеха:** есть `релиз определён` для `prod-holding` и
+`dry-run: запись пропущена`. Одно сообщение о завершении недостаточно:
+при `would_write=0` без рассчитанного релиза проверьте строку среды, статус,
+overrides и сообщения о пропусках. `/health` проверяет только HTTP-сервер.
+
+Колонка G не изменится. Режим отклоняет `-write`, `-daemon`, одновременный
+`-google-auth`, отсутствие `-env` и сборщик `stub` до авторизации.
+Для повторного теста перезапустите сервис и пройдите вход по новой ссылке.
+После проверки приостановите тестовый сервис.
+
+#### Ограничения и ошибки
+
+- `open /etc/secrets/web-client.json: no such file or directory`: проверьте
+  Secret File и точное совпадение имени с `GOOGLE_CREDENTIALS_JSON`.
+- `redirect_uri_mismatch`: адрес в Google Cloud должен точно совпадать с
+  `GOOGLE_OAUTH_REDIRECT_URL`, включая HTTPS, домен и путь без завершающего `/`.
+- 401/403 от Jira/GitLab: проверьте токены и права. Сетевой таймаут/DNS:
+  корпоративные адреса должны быть доступны из Render, а не только через VPN
+  на вашем ноутбуке.
+- Free Render засыпает после 15 минут без входящих запросов и теряет локальные
+  файлы при рестарте, деплое и засыпании. Каталог `/tmp/google-auth` приложение
+  создаёт автоматически, но токен там временный. Новый запуск требует входа.
+- Google External + Testing выдаёт refresh token для Sheets на 7 дней.
+  Серверный OAuth это ограничение не отменяет.
+
+Это проверка одного прогона, а не постоянный почасовой деплой. Внешнее
+хранилище токенов пока не реализовано. Дополнительные пояснения и ссылки
+на документацию платформы: [RENDER.md](RENDER.md).
+
 ### GitLab
 
 Нужен только в режиме `IMAGE_COLLECTOR=gitlab`: сервис запускает пайплайн
