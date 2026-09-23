@@ -125,22 +125,6 @@ collect-images и читает его артефакты.
 Jira — 2 минутами. Транспорт пропускает только читающие вызовы: изменяющие
 запросы блокируются до отправки в сеть.
 
-### Проверить, что доступы выданы верно
-
-```bash
-# GitLab: ожидаем scopes ["api"] и access_level 30 (Developer) или 40 (Maintainer)
-curl -sS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "$GITLAB_URL/api/v4/personal_access_tokens/self" | jq '{scopes, expires_at, active}'
-curl -sS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "$GITLAB_URL/api/v4/projects/$COLLECT_IMAGES_PROJECT_ID" | jq '{path_with_namespace, access: .permissions.project_access.access_level}'
-
-# Jira: ожидаем имя учётной записи, под которой выпущен токен
-curl -sS -H "Authorization: Bearer $JIRA_TOKEN" "$JIRA_URL/rest/api/2/myself" | jq '{name, active}'
-```
-
-Доступ к Google проверяется прогоном: если реестр прочитался, ключ и права в порядке.
-
-Токены не вставляйте в команды терминала и в комментарии — только в `.env`,
-который исключён из Git.
-
 ## Сборка и тесты
 
 Версия Go в `go.mod` — `1.27.0`.
@@ -207,6 +191,22 @@ export JIRA_JQL='summary ~ "Release" AND project = DevOps'
 ```bash
 set -a; . ./.env; set +a
 ```
+
+### Проверить, что доступы выданы верно
+
+```bash
+# GitLab: ожидаем scopes ["api"] и access_level 30 (Developer) или 40 (Maintainer)
+curl -sS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "$GITLAB_URL/api/v4/personal_access_tokens/self" | jq '{scopes, expires_at, active}'
+curl -sS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "$GITLAB_URL/api/v4/projects/$COLLECT_IMAGES_PROJECT_ID" | jq '{path_with_namespace, access: .permissions.project_access.access_level}'
+
+# Jira: ожидаем имя учётной записи, под которой выпущен токен
+curl -sS -H "Authorization: Bearer $JIRA_TOKEN" "$JIRA_URL/rest/api/2/myself" | jq '{name, active}'
+```
+
+Доступ к Google проверяется прогоном: если реестр прочитался, ключ и права в порядке.
+
+Токены не вставляйте в команды терминала и в комментарии — только в `.env`,
+который исключён из Git.
 
 ### Полный рабочий режим
 
