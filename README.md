@@ -133,7 +133,33 @@ refresh token на неделю: scope `spreadsheets` не входит в ис�
    token в этом режиме истекает через 7 дней — серверный вход не отменяет это правило.
 2. Создайте OAuth client **Web application**, добавьте Authorized redirect URI:
    `https://tracker.example.com/oauth/callback` (замените домен своим).
-3. Сохраните скачанный JSON на сервере как секрет. Настройте переменные:
+   Адрес вписывается в **Authorized redirect URIs**, а не в Authorized JavaScript
+   origins — иначе Google вернёт `redirect_uri_mismatch`. Скачайте JSON клиента:
+   полный client secret Google показывает только при создании. Потеряли файл —
+   откройте клиент → **Add secret** и сразу сохраните новый JSON.
+3. Перенесите JSON на сервер. `GOOGLE_CREDENTIALS_JSON` — путь к файлу, а не его
+   содержимое, поэтому файл должен лежать на диске, доступном сервису.
+   В чат и почту файл не отправляйте: в нём client secret.
+
+   Сервер с Docker — скопировать и смонтировать каталог read-only:
+
+   ```bash
+   scp client_secret_*.json user@server:/opt/tracker/secrets/web-client.json
+   ssh user@server 'chmod 600 /opt/tracker/secrets/web-client.json'
+   # docker run ... -v /opt/tracker/secrets:/app/secrets:ro
+   ```
+
+   Kubernetes — создать Secret и подключить его в под томом `/app/secrets`:
+
+   ```bash
+   kubectl create secret generic tracker-google -n <namespace> \
+     --from-file=web-client.json=./client_secret_xxx.json
+   ```
+
+   Vault — JSON кладётся в Vault целиком, в файл внутри пода его выводит
+   Vault Agent или External Secrets. Путь согласуется с командой, ведущей Vault.
+
+   Настройте переменные:
 
    ```bash
    GOOGLE_CREDENTIALS_JSON=/app/secrets/web-client.json
