@@ -186,7 +186,11 @@ func googleClientOption(ctx context.Context, credentialsPath string) (option.Cli
 		}
 		tokenRaw, err := os.ReadFile(googleTokenPath)
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%s не найден — сначала: go run ./cmd/googleauth", googleTokenPath)
+			// На сервере этот путь тупиковый: вход завершается редиректом на
+			// 127.0.0.1 той машины, где запущена команда, и порт каждый раз новый.
+			return nil, fmt.Errorf("%s не найден. Локально: go run ./cmd/googleauth. "+
+				"На сервере такой вход не завершить — нужен ключ service account "+
+				"в GOOGLE_CREDENTIALS_JSON", googleTokenPath)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("чтение %s: %w", googleTokenPath, err)
