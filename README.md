@@ -404,6 +404,23 @@ go build -o env-release-tracker .
 
 ## Docker
 
+Как сервис устроен в контейнере — ключ Google, тома, флаги запуска — описывает
+[docker-compose.yml](docker-compose.yml). Настройки он берёт из того же `.env`:
+
+```bash
+docker compose up -d --build   # почасовой цикл без записи в таблицу
+```
+
+Запись включается явно: `command: ["-daemon", "-write"]`. Вход через Google
+для OAuth-клиента Web application — отдельный профиль, на это время `tracker`
+остановите:
+
+```bash
+docker compose --profile google-auth run --rm --service-ports google-auth
+```
+
+Только сборка образа:
+
 ```bash
 docker build -t env-release-tracker:local .
 ```

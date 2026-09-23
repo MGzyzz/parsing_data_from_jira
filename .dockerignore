@@ -24,3 +24,6 @@ docs/
 # Server OAuth persistent volume
 google-token/
 .oauth-*
+
+# Описание запуска, а не часть образа: правка не должна сбрасывать кэш сборки.
+docker-compose.yml

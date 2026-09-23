@@ -1,0 +1,55 @@
+# Как сервис работает в контейнере: что ему нужно снаружи и где он хранит данные.
+#
+#   docker compose up -d --build                       почасовой цикл без записи
+#   docker compose --profile google-auth run --rm --service-ports google-auth
+#                                                      вход через Google (OAuth Web)
+#
+# Настройки берутся из .env (образец — .env.example). Из него же compose читает
+# GOOGLE_CREDENTIALS_JSON — путь к ключу на хосте; внутри контейнера путь свой.
+
+x-tracker: &tracker
+  build: .
+  image: env-release-tracker:local
+  env_file: .env
+  environment:
+    # Перекрывают значения из .env: там пути хоста, здесь — пути в контейнере.
+    GOOGLE_CREDENTIALS_JSON: /run/secrets/google-credentials
+    GOOGLE_TOKEN_FILE: /app/google-token/token.json
+    STATE_FILE: /app/state/state.json
+  secrets:
+    - google-credentials
+  volumes:
+    # Время последнего опроса: без него overrides.interval не сработает.
+    - state:/app/state
+    # Токен OAuth. Сервис сам обновляет его, поэтому том с правом записи.
+    # С service account не используется.
+    - google-token:/app/google-token
+
+services:
+  tracker:
+    <<: *tracker
+    # Запись в реестр — только по явному -write: ["-daemon", "-write"].
+    command: ["-daemon"]
+    restart: unless-stopped
+
+  # Разовый вход через Google для OAuth-клиента типа Web application.
+  # Сохраняет токен в общий том и завершается; tracker на это время остановить.
+  google-auth:
+    <<: *tracker
+    profiles: ["google-auth"]
+    command: ["-google-auth", "-google-auth-listen", "0.0.0.0:8080"]
+    # Наружу только через HTTPS reverse proxy: GOOGLE_OAUTH_REDIRECT_URL из .env.
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: "no"
+
+secrets:
+  # Ключ service account или JSON OAuth-клиента. Монтируется read-only в
+  # /run/secrets; в образ и в Git не попадает. На Linux файл должен быть
+  # доступен на чтение UID 65532 — под ним работает образ.
+  google-credentials:
+    file: ${GOOGLE_CREDENTIALS_JSON:?укажите в .env путь к ключу Google}
+
+volumes:
+  state:
+  google-token:
